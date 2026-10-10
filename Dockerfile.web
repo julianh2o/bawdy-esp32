@@ -17,7 +17,21 @@ RUN pip install --no-cache-dir "rich>=13.0.0"
 COPY sequencer.py ./
 COPY src/wled_sequencer ./src/wled_sequencer
 
-ENV SEQUENCER_HOST=0.0.0.0 \
+ARG VERSION=unknown
+ARG BUILD_DATE
+ARG VCS_REF
+
+LABEL org.opencontainers.image.title="bawdy-web"
+LABEL org.opencontainers.image.description="Browser sequencer UI for the bawdy WLED lighting engine"
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.created="${BUILD_DATE}"
+LABEL org.opencontainers.image.revision="${VCS_REF}"
+LABEL org.opencontainers.image.authors="Julian Hartline <https://www.julianhartline.com>"
+LABEL org.opencontainers.image.url="https://hub.docker.com/r/julianh2o/bawdy-web"
+LABEL org.opencontainers.image.source="https://github.com/julianh2o/bawdy-esp32"
+
+ENV APP_VERSION="${VERSION}" \
+    SEQUENCER_HOST=0.0.0.0 \
     SEQUENCER_PORT=8080 \
     SEQUENCES_DIR=/data/sequences \
     ENGINE_URL=http://127.0.0.1:8765

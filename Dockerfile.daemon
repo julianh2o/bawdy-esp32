@@ -28,10 +28,24 @@ CMD ["python", "sim.py", "--universe", "/config/universe.json", "--patch", "/con
 # --- daemon (default target) ------------------------------------------------
 FROM base AS daemon
 
+ARG VERSION=unknown
+ARG BUILD_DATE
+ARG VCS_REF
+
+LABEL org.opencontainers.image.title="bawdy-daemon"
+LABEL org.opencontainers.image.description="Headless WLED lighting engine: REST API + DDP output to WLED boards"
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.created="${BUILD_DATE}"
+LABEL org.opencontainers.image.revision="${VCS_REF}"
+LABEL org.opencontainers.image.authors="Julian Hartline <https://www.julianhartline.com>"
+LABEL org.opencontainers.image.url="https://hub.docker.com/r/julianh2o/bawdy-daemon"
+LABEL org.opencontainers.image.source="https://github.com/julianh2o/bawdy-esp32"
+
 # All settings can be overridden with env vars (WLED_*) or by appending CLI args.
-# The API binds loopback by default (it has no auth); the compose file uses host
-# networking so the web UI container can proxy to it without exposing it on the LAN.
-ENV WLED_API_HOST=127.0.0.1 \
+# The API binds all interfaces so the web UI and the Java Universe Manager can reach it.
+# It has no authentication (see TODO.md #7); set WLED_API_HOST=127.0.0.1 to keep it local.
+ENV APP_VERSION="${VERSION}" \
+    WLED_API_HOST=0.0.0.0 \
     WLED_API_PORT=8765 \
     WLED_FPS=30 \
     WLED_UNIVERSE=/config/universe.json \
