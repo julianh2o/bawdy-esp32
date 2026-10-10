@@ -4,9 +4,9 @@ Two images, published to Docker Hub and run together by `docker-compose.yaml`:
 
 | Service / container | Image | Dockerfile | Purpose |
 |---|---|---|---|
-| `daemon` / `bawdy-daemon` | `julianh2o/bawdy-daemon` | `Dockerfile.daemon` | Lighting engine. REST API on port 8765, DDP to the WLED boards. |
-| `web` / `bawdy-web` | `julianh2o/bawdy-web` | `Dockerfile.web` | Browser sequencer on port 8080. Stores sequences and proxies `/engine/*` to the daemon. |
-| `sim` / `bawdy-sim` (profile) | `bawdy-sim` (local build only) | `Dockerfile.daemon --target sim` | Virtual boards + visualizer, for testing without hardware. |
+| `daemon` / `bawdy-lights-daemon` | `julianh2o/bawdy-lights-daemon` | `Dockerfile.daemon` | Lighting engine. REST API on port 8765, DDP to the WLED boards. |
+| `web` / `bawdy-lights-web` | `julianh2o/bawdy-lights-web` | `Dockerfile.web` | Browser sequencer on port 8080. Stores sequences and proxies `/engine/*` to the daemon. |
+| `sim` / `bawdy-lights-sim` (profile) | `bawdy-lights-sim` (local build only) | `Dockerfile.daemon --target sim` | Virtual boards + visualizer, for testing without hardware. |
 
 ## 1. Prepare the network and boards
 
@@ -39,7 +39,7 @@ Config is mounted read-only at `/config`; it is not baked into the image. The bu
 ## 3. Run
 
 ```sh
-docker compose pull         # julianh2o/bawdy-daemon + julianh2o/bawdy-web from Docker Hub
+docker compose pull         # julianh2o/bawdy-lights-daemon + julianh2o/bawdy-lights-web from Docker Hub
 docker compose up -d        # or: docker compose up -d --build   (build from this checkout)
 docker compose ps           # both should become "healthy"
 curl http://<docker-host>:8765/api/status   # "running": true, actual_fps near WLED_FPS

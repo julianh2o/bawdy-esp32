@@ -1,7 +1,7 @@
 # Headless lighting engine (REST API + DDP output to WLED boards).
 #
-#   docker build -f Dockerfile.daemon -t bawdy-daemon .
-#   docker build -f Dockerfile.daemon --target sim -t bawdy-sim .   # optional simulator image
+#   docker build -f Dockerfile.daemon -t bawdy-lights-daemon .
+#   docker build -f Dockerfile.daemon --target sim -t bawdy-lights-sim .   # optional simulator image
 FROM python:3.12-slim AS base
 
 ENV PYTHONUNBUFFERED=1 \
@@ -32,13 +32,13 @@ ARG VERSION=unknown
 ARG BUILD_DATE
 ARG VCS_REF
 
-LABEL org.opencontainers.image.title="bawdy-daemon"
+LABEL org.opencontainers.image.title="bawdy-lights-daemon"
 LABEL org.opencontainers.image.description="Headless WLED lighting engine: REST API + DDP output to WLED boards"
 LABEL org.opencontainers.image.version="${VERSION}"
 LABEL org.opencontainers.image.created="${BUILD_DATE}"
 LABEL org.opencontainers.image.revision="${VCS_REF}"
 LABEL org.opencontainers.image.authors="Julian Hartline <https://www.julianhartline.com>"
-LABEL org.opencontainers.image.url="https://hub.docker.com/r/julianh2o/bawdy-daemon"
+LABEL org.opencontainers.image.url="https://hub.docker.com/r/julianh2o/bawdy-lights-daemon"
 LABEL org.opencontainers.image.source="https://github.com/julianh2o/bawdy-esp32"
 
 # All settings can be overridden with env vars (WLED_*) or by appending CLI args.
