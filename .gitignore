@@ -29,3 +29,7 @@ target/
 # Runtime state
 logs/
 data/devices/
+
+# Deployment config
+.env
+config/*.json

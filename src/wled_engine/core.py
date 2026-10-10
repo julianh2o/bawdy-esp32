@@ -147,8 +147,16 @@ class LightingEngine:
         controller_ips: dict[str, str] | None = None,
         controller_ports: dict[str, int] | None = None,
         dry_run: bool | None = None,
+        simulator: bool | None = None,
     ) -> None:
-        """Register spatial universe, patch table, and configure Cat6 multi-node dispatcher."""
+        """Register spatial universe, patch table, and configure Cat6 multi-node dispatcher.
+
+        Controllers listed in ``controller_ips`` are addressed at that IP on
+        ``controller_ports`` (default 4048, the real WLED DDP port). In simulator
+        mode, unlisted controllers go to 127.0.0.1 on ports 4048+idx. ``simulator``
+        defaults to True when no ``controller_ips`` are given (legacy behaviour);
+        otherwise a controller without an IP raises ``ValueError``.
+        """
         self.universe = universe
         self.patch_table = patch_table
         self.spatial_sampler = SpatialSampler(universe, patch_table)
@@ -160,10 +168,19 @@ class LightingEngine:
             dry_run=use_dry,
         )
 
+        ips = controller_ips or {}
+        ports = controller_ports or {}
+        if simulator is None:
+            simulator = not ips
         controllers = patch_table.get_controllers()
+        missing = [cid for cid in controllers if cid not in ips]
+        if missing and not simulator:
+            raise ValueError(f"No IP configured for controller(s): {', '.join(missing)}")
         for idx, cid in enumerate(controllers):
-            ip = (controller_ips or {}).get(cid, "127.0.0.1")
-            port = (controller_ports or {}).get(cid, 4048 + idx)
+            if cid in ips:
+                ip, port = ips[cid], ports.get(cid, 4048)
+            else:
+                ip, port = "127.0.0.1", ports.get(cid, 4048 + idx)
             self.dispatcher.add_node(node_id=cid, ip=ip, port=port)
 
     # Backward compatibility alias
@@ -222,8 +239,12 @@ class LightingEngine:
 
         return frames
 
-    def run(self, max_frames: int | None = None) -> None:
-        """Run engine synchronously until stopped or max_frames reached."""
+    def run(self, max_frames: int | None = None, close_on_exit: bool = True) -> None:
+        """Run engine synchronously until stopped or max_frames reached.
+
+        ``start()`` passes ``close_on_exit=False`` so ``stop()`` can still send
+        a blackout frame over the open sockets before closing them.
+        """
         self._stop_event.clear()
         frames_run = 0
 
@@ -237,14 +258,17 @@ class LightingEngine:
                 frames_run += 1
                 self.clock.sleep_until_next_frame(start_time)
         finally:
-            self.close()
+            if close_on_exit:
+                self.close()
 
     def start(self) -> None:
         """Start engine loop asynchronously in background daemon thread."""
         if self.is_running:
             return
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self.run, daemon=True, name="WledEngineClock")
+        self._thread = threading.Thread(
+            target=self.run, kwargs={"close_on_exit": False}, daemon=True, name="WledEngineClock"
+        )
         self._thread.start()
 
     def stop(self, timeout: float = 2.0) -> None:
