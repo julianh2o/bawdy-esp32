@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 import argparse
+import os
+import signal
 import sys
+import threading
 import time
 
 from rich.console import Console
@@ -222,8 +225,41 @@ def cmd_daemon(args: argparse.Namespace, console: Console, repo: DeviceRepositor
             patch_file = args.patch or (Path(args.universe).parent / "patch.json")
             patch_table = PatchTable.load_json(patch_file)
 
-        engine.setup_universe(universe, patch_table, dry_run=args.dry_run)
+        from wled_engine.controllers import load_controllers
+        patch_path = getattr(args, "patch", None) or (
+            Path(args.universe).parent / "patch.json" if getattr(args, "universe", None) else None
+        )
+        simulator = bool(getattr(args, "simulator", False)) or args.dry_run
+        controllers_path = getattr(args, "controllers", None)
+        if simulator and controllers_path and not Path(controllers_path).is_file():
+            controllers_path = None  # e.g. image default path when running against the simulator
+        try:
+            controller_ips, controller_ports = load_controllers(controllers_path, patch_path)
+        except (OSError, ValueError) as e:
+            console.print(f"[bold red]Invalid controllers config:[/bold red] {e}")
+            sys.exit(2)
+        if not controller_ips and not simulator:
+            console.print(
+                "[bold red]No controller IPs configured.[/bold red] Provide --controllers FILE "
+                "(or a 'controllers' section in patch.json), or pass --simulator to target the local simulator."
+            )
+            sys.exit(2)
+        try:
+            engine.setup_universe(
+                universe,
+                patch_table,
+                broadcast_ip=getattr(args, "broadcast_ip", None) or "255.255.255.255",
+                controller_ips=controller_ips,
+                controller_ports=controller_ports,
+                dry_run=args.dry_run,
+                simulator=simulator,
+            )
+        except ValueError as e:
+            console.print(f"[bold red]{e}[/bold red]")
+            sys.exit(2)
         console.print(f"[bold green]🌐 Spatial Universe Active:[/bold green] [cyan]{universe.name}[/cyan] ({universe.total_pixels} pixels across {len(patch_table.get_controllers())} Cat6 controller nodes)")
+        for node in engine.dispatcher.nodes:
+            console.print(f"  • {node.node_id} -> {node.ip}:{node.port}")
     elif args.device:
         device = repo.get_by_name(args.device) or repo.get(args.device)
         if not device:
@@ -257,14 +293,19 @@ def cmd_daemon(args: argparse.Namespace, console: Console, repo: DeviceRepositor
     elif not getattr(args, "venue", False) and not getattr(args, "universe", None):
         console.print("  • No UDP target configured. Engine running in headless computation mode.")
     console.print("  Press [bold yellow]Ctrl+C[/bold yellow] to stop.")
+
+    # SIGTERM (docker stop) shuts down like Ctrl+C: stop the engine, then send a blackout frame.
+    stop_event = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: stop_event.set())
     try:
-        while True:
-            time.sleep(1.0)
+        while not stop_event.wait(1.0):
+            pass
+        console.print("\n[yellow]Shutting down daemon...[/yellow]")
     except KeyboardInterrupt:
         console.print("\n[yellow]Shutting down daemon...[/yellow]")
     finally:
         daemon.stop()
-        engine.stop()
+        engine.stop()  # joins the clock thread, then flushes a blackout frame to all boards
         console.print("[green]Daemon stopped.[/green]")
 
 
@@ -362,17 +403,23 @@ def build_parser() -> argparse.ArgumentParser:
     # Daemon
     p_daemon = subparsers.add_parser("daemon", help="Run the headless REST Engine Daemon")
     p_daemon.add_argument("--venue", action="store_true", help="Configure full 20-node multi-controller venue universe")
-    p_daemon.add_argument("--preset", default=None, help="Preset stage universe name (concert_hall, warehouse_rave, festival_amphitheater, art_gallery)")
-    p_daemon.add_argument("--universe", default=None, help="Path to SpatialUniverse JSON file")
-    p_daemon.add_argument("--patch", default=None, help="Path to PatchTable JSON file")
+    # Settings can also come from WLED_* environment variables (used by the Docker image).
+    env = os.environ.get
+    env_flag = lambda name: env(name, "").lower() in ("1", "true", "yes", "on")
+    p_daemon.add_argument("--preset", default=env("WLED_PRESET") or None, help="Preset stage universe name (concert_hall, warehouse_rave, festival_amphitheater, art_gallery) [WLED_PRESET]")
+    p_daemon.add_argument("--universe", default=env("WLED_UNIVERSE") or None, help="Path to SpatialUniverse JSON file [WLED_UNIVERSE]")
+    p_daemon.add_argument("--patch", default=env("WLED_PATCH") or None, help="Path to PatchTable JSON file [WLED_PATCH]")
+    p_daemon.add_argument("--controllers", default=env("WLED_CONTROLLERS") or None, help='Path to controllers JSON, e.g. {"wled_01": {"ip": "192.168.1.50", "port": 4048}}; overrides a "controllers" section in patch.json [WLED_CONTROLLERS]')
+    p_daemon.add_argument("--simulator", action="store_true", default=env_flag("WLED_SIMULATOR"), help="Target the local simulator layout (127.0.0.1, ports 4048+idx) instead of real controller IPs [WLED_SIMULATOR]")
+    p_daemon.add_argument("--broadcast-ip", default=env("WLED_BROADCAST_IP") or "255.255.255.255", help="Broadcast address for the DDP frame-sync packet, e.g. 192.168.1.255 (default: 255.255.255.255) [WLED_BROADCAST_IP]")
     p_daemon.add_argument("--device", help="Device name or ID to attach")
     p_daemon.add_argument("--ip", default=None, help="Target controller IP address")
     p_daemon.add_argument("--channels", nargs="+", type=int, default=None, help="LED counts per channel (e.g. 270 270 270)")
     p_daemon.add_argument("--target-port", type=int, default=None, help="UDP target port on device (default: 4048)")
-    p_daemon.add_argument("--host", default="127.0.0.1", help="HTTP API host (default: 127.0.0.1)")
-    p_daemon.add_argument("--port", type=int, default=8765, help="HTTP API port (default: 8765)")
-    p_daemon.add_argument("--fps", type=float, default=30.0, help="Engine target FPS (default: 30.0)")
-    p_daemon.add_argument("--dry-run", action="store_true", help="Preview only, do not send UDP packets")
+    p_daemon.add_argument("--host", default=env("WLED_API_HOST") or "127.0.0.1", help="HTTP API host (default: 127.0.0.1) [WLED_API_HOST]")
+    p_daemon.add_argument("--port", type=int, default=int(env("WLED_API_PORT") or 8765), help="HTTP API port (default: 8765) [WLED_API_PORT]")
+    p_daemon.add_argument("--fps", type=float, default=float(env("WLED_FPS") or 30.0), help="Engine target FPS (default: 30.0) [WLED_FPS]")
+    p_daemon.add_argument("--dry-run", action="store_true", default=env_flag("WLED_DRY_RUN"), help="Preview only, do not send UDP packets [WLED_DRY_RUN]")
 
     return parser
 

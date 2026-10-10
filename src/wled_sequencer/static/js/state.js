@@ -26,7 +26,8 @@ export class SequencerState {
     this.currentLoopIteration = 0;
 
     // Engine Telemetry
-    this.engineUrl = "http://127.0.0.1:8765";
+    // Same-origin path proxied by the sequencer web server to the daemon (see ENGINE_URL / --engine).
+    this.engineUrl = "/engine";
     this.engineOnline = false;
     this.engineFps = 0.0;
     this.statusMessage = "Ready";

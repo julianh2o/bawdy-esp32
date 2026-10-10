@@ -61,7 +61,7 @@ export function initGlobalSettings() {
     inpEngineUrl.value = state.engineUrl;
     inpEngineUrl.addEventListener("change", () => {
       let url = inpEngineUrl.value.trim();
-      if (!url.startsWith("http://") && !url.startsWith("https://")) {
+      if (!url.startsWith("/") && !url.startsWith("http://") && !url.startsWith("https://")) {
         url = "http://" + url;
       }
       state.engineUrl = url;

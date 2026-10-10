@@ -5,6 +5,8 @@ import json
 import mimetypes
 import os
 import threading
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -45,12 +47,49 @@ class SequencerHandler(BaseHTTPRequestHandler):
             return {}
         return json.loads(self.rfile.read(length).decode("utf-8"))
 
+    def _proxy_to_engine(self) -> None:
+        """Forward /engine/<path> to the configured daemon so browsers only talk to this server."""
+        parsed = urlparse(self.path)
+        target = self.server.engine_url.rstrip("/") + parsed.path[len("/engine"):]
+        if parsed.query:
+            target += "?" + parsed.query
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length) if length else None
+        req = urllib.request.Request(target, data=body, method=self.command)
+        if body is not None:
+            req.add_header("Content-Type", self.headers.get("Content-Type", "application/json"))
+        try:
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
+                status, payload, ctype = resp.status, resp.read(), resp.headers.get("Content-Type")
+        except urllib.error.HTTPError as e:
+            status, payload, ctype = e.code, e.read(), e.headers.get("Content-Type")
+        except Exception as e:
+            self._send_error(502, f"Engine unreachable at {self.server.engine_url}: {e}")
+            return
+        self.send_response(status)
+        self.send_header("Content-Type", ctype or "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _try_proxy(self) -> bool:
+        if urlparse(self.path).path.startswith("/engine/"):
+            self._proxy_to_engine()
+            return True
+        return False
+
     def do_OPTIONS(self) -> None:
         self.send_response(204)
         self._send_cors()
         self.end_headers()
 
+    def do_PUT(self) -> None:
+        if not self._try_proxy():
+            self._send_error(404, f"Unknown endpoint: {urlparse(self.path).path}")
+
     def do_GET(self) -> None:
+        if self._try_proxy():
+            return
         parsed = urlparse(self.path)
         path = unquote(parsed.path.rstrip("/"))
 
@@ -76,6 +115,8 @@ class SequencerHandler(BaseHTTPRequestHandler):
         self._serve_static(path)
 
     def do_POST(self) -> None:
+        if self._try_proxy():
+            return
         parsed = urlparse(self.path)
         path = unquote(parsed.path.rstrip("/"))
 
@@ -92,6 +133,8 @@ class SequencerHandler(BaseHTTPRequestHandler):
         self._send_error(404, f"Unknown endpoint: {path}")
 
     def do_DELETE(self) -> None:
+        if self._try_proxy():
+            return
         parsed = urlparse(self.path)
         path = unquote(parsed.path.rstrip("/"))
 
@@ -153,9 +196,11 @@ class SequencerServer(ThreadingHTTPServer):
         server_address: tuple[str, int],
         repo: SequenceRepository,
         static_dir: Path,
+        engine_url: str = "http://127.0.0.1:8765",
     ) -> None:
         self.repo = repo
         self.static_dir = static_dir
+        self.engine_url = engine_url
         super().__init__(server_address, SequencerHandler)
 
 
@@ -168,9 +213,11 @@ class SequencerAppServer:
         port: int = 8081,
         sequences_dir: Path | str | None = None,
         static_dir: Path | str | None = None,
+        engine_url: str = "http://127.0.0.1:8765",
     ) -> None:
         self.host = host
         self.port = port
+        self.engine_url = engine_url
 
         # Resolve directories
         base_dir = Path(__file__).resolve().parent
@@ -190,7 +237,7 @@ class SequencerAppServer:
     def start(self) -> None:
         if self.is_running:
             return
-        self.server = SequencerServer((self.host, self.port), self.repo, self.static_dir)
+        self.server = SequencerServer((self.host, self.port), self.repo, self.static_dir, self.engine_url)
         self.port = self.server.server_port
         self._thread = threading.Thread(target=self.server.serve_forever, daemon=True, name="WledSequencerServer")
         self._thread.start()

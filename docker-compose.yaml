@@ -1,0 +1,88 @@
+# Daemon + web UI on a home/venue network. See docs/DEPLOYMENT.md.
+#
+#   cp .env.example .env
+#   cp config/controllers.json.example config/controllers.json   # then edit board IPs
+#   cp config/universe.json.example config/universe.json; cp config/patch.json.example config/patch.json
+#   docker compose up -d            # pulls julianh2o/bawdy-daemon + julianh2o/bawdy-web
+#   docker compose up -d --build    # or build locally from this checkout
+#
+# Simulator instead of hardware:  docker compose --profile sim up --build
+#
+# Networking: both services use `network_mode: host`.
+#  - The daemon needs it so the DDP frame-sync broadcast reaches the LAN (Docker's
+#    bridge network doesn't forward broadcasts).
+#  - Both the web UI (WEB_PORT) and the daemon REST API (DAEMON_PORT) are exposed on
+#    the host by default, so the Java Universe Manager and other tools can drive the
+#    daemon directly. The API has no auth (TODO.md #7): set DAEMON_API_HOST=127.0.0.1
+#    in .env to keep it local; the web UI still reaches it through its /engine/* proxy.
+#  - With host networking `ports:` mappings are ignored; change WEB_PORT in .env instead.
+services:
+  daemon:
+    build:
+      context: .
+      dockerfile: Dockerfile.daemon
+      target: daemon
+    image: ${REGISTRY_USER:-julianh2o}/bawdy-daemon:${IMAGE_TAG:-latest}
+    container_name: bawdy-daemon
+    network_mode: host
+    restart: unless-stopped
+    stop_grace_period: 10s   # allow the blackout frame on SIGTERM
+    environment:
+      WLED_FPS: ${WLED_FPS:-30}
+      WLED_API_HOST: ${DAEMON_API_HOST:-0.0.0.0}
+      WLED_API_PORT: ${DAEMON_PORT:-8765}
+      # Subnet broadcast for the DDP sync packet, e.g. 192.168.1.255
+      WLED_BROADCAST_IP: ${WLED_BROADCAST_IP:-255.255.255.255}
+      WLED_DRY_RUN: ${WLED_DRY_RUN:-false}
+      WLED_SIMULATOR: ${WLED_SIMULATOR:-false}
+    volumes:
+      - ./config:/config:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:${DAEMON_PORT:-8765}/api/status', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    image: ${REGISTRY_USER:-julianh2o}/bawdy-web:${IMAGE_TAG:-latest}
+    container_name: bawdy-web
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      daemon:
+        condition: service_healthy
+    environment:
+      SEQUENCER_HOST: 0.0.0.0
+      SEQUENCER_PORT: ${WEB_PORT:-8080}
+      ENGINE_URL: http://127.0.0.1:${DAEMON_PORT:-8765}
+    volumes:
+      - sequences:/data/sequences
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:${WEB_PORT:-8080}/api/sequences', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  # Virtual WLED boards + visualizer (http://<host>:8090). Use with WLED_SIMULATOR=true
+  # (the daemon then targets 127.0.0.1, ports 4048+idx) and no controllers file.
+  sim:
+    profiles: ["sim"]
+    build:
+      context: .
+      dockerfile: Dockerfile.daemon
+      target: sim
+    image: bawdy-sim   # local build only, not published
+    container_name: bawdy-sim
+    network_mode: host
+    restart: unless-stopped
+    command: ["python", "sim.py", "--universe", "/config/universe.json", "--patch", "/config/patch.json", "--web-host", "0.0.0.0", "--web-port", "${SIM_WEB_PORT:-8090}", "--no-browser"]
+    volumes:
+      - ./config:/config:ro
+
+volumes:
+  sequences:

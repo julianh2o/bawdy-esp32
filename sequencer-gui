@@ -14,5 +14,5 @@ exec java -Dawt.useSystemAAFontSettings=on -Dswing.aatext=true -jar "$JAR_FILE" 
   --sequences "$ROOT_DIR/sequences" \
   --universe "$ROOT_DIR/data/venue/universe.json" \
   --patch "$ROOT_DIR/data/venue/patch.json" \
-  --engine "http://127.0.0.1:8765" \
+  --engine "${ENGINE_URL:-http://127.0.0.1:8765}" \
   "$@"

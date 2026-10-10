@@ -29,7 +29,7 @@ case "$MODE" in
 
   --daemon|daemon)
     echo "⚡ Starting Lighting Engine REST Daemon (http://127.0.0.1:8765)..."
-    python3 "$ROOT_DIR/run.py" daemon --venue --universe "$ROOT_DIR/data/venue/universe.json" --patch "$ROOT_DIR/data/venue/patch.json" --port 8765
+    python3 "$ROOT_DIR/run.py" daemon --venue --simulator --universe "$ROOT_DIR/data/venue/universe.json" --patch "$ROOT_DIR/data/venue/patch.json" --port 8765
     ;;
 
   --gui|gui)
@@ -58,7 +58,7 @@ case "$MODE" in
 
     # 2. Start Lighting Engine Daemon in background
     echo "2. Starting Lighting Engine Daemon (REST API :8765)..."
-    python3 "$ROOT_DIR/run.py" daemon --venue --universe "$ROOT_DIR/data/venue/universe.json" --patch "$ROOT_DIR/data/venue/patch.json" --port 8765 > "$ROOT_DIR/logs/daemon.log" 2>&1 &
+    python3 "$ROOT_DIR/run.py" daemon --venue --simulator --universe "$ROOT_DIR/data/venue/universe.json" --patch "$ROOT_DIR/data/venue/patch.json" --port 8765 >"$ROOT_DIR/logs/daemon.log" 2>&1 &
     DAEMON_PID=$!
     sleep 1
 
