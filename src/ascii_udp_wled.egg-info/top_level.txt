@@ -1,3 +1,0 @@
-wled_app
-wled_engine
-wled_simulator
