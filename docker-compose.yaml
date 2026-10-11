@@ -3,7 +3,7 @@
 #   cp .env.example .env
 #   cp config/controllers.json.example config/controllers.json   # then edit board IPs
 #   cp config/universe.json.example config/universe.json; cp config/patch.json.example config/patch.json
-#   docker compose up -d            # pulls julianh2o/bawdy-daemon + julianh2o/bawdy-web
+#   docker compose up -d            # pulls julianh2o/bawdy-lights-daemon + julianh2o/bawdy-lights-web
 #   docker compose up -d --build    # or build locally from this checkout
 #
 # Simulator instead of hardware:  docker compose --profile sim up --build
@@ -22,8 +22,8 @@ services:
       context: .
       dockerfile: Dockerfile.daemon
       target: daemon
-    image: ${REGISTRY_USER:-julianh2o}/bawdy-daemon:${IMAGE_TAG:-latest}
-    container_name: bawdy-daemon
+    image: ${REGISTRY_USER:-julianh2o}/bawdy-lights-daemon:${IMAGE_TAG:-latest}
+    container_name: bawdy-lights-daemon
     network_mode: host
     restart: unless-stopped
     stop_grace_period: 10s   # allow the blackout frame on SIGTERM
@@ -48,8 +48,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.web
-    image: ${REGISTRY_USER:-julianh2o}/bawdy-web:${IMAGE_TAG:-latest}
-    container_name: bawdy-web
+    image: ${REGISTRY_USER:-julianh2o}/bawdy-lights-web:${IMAGE_TAG:-latest}
+    container_name: bawdy-lights-web
     network_mode: host
     restart: unless-stopped
     depends_on:
@@ -76,8 +76,8 @@ services:
       context: .
       dockerfile: Dockerfile.daemon
       target: sim
-    image: bawdy-sim   # local build only, not published
-    container_name: bawdy-sim
+    image: bawdy-lights-sim   # local build only, not published
+    container_name: bawdy-lights-sim
     network_mode: host
     restart: unless-stopped
     command: ["python", "sim.py", "--universe", "/config/universe.json", "--patch", "/config/patch.json", "--web-host", "0.0.0.0", "--web-port", "${SIM_WEB_PORT:-8090}", "--no-browser"]

@@ -1,8 +1,8 @@
 #!/bin/bash
 # Build (and optionally push) the bawdy Docker images to Docker Hub.
 #
-#   julianh2o/bawdy-daemon   lighting engine + REST API   (Dockerfile.daemon, target: daemon)
-#   julianh2o/bawdy-web      browser sequencer UI         (Dockerfile.web)
+#   julianh2o/bawdy-lights-daemon   lighting engine + REST API   (Dockerfile.daemon, target: daemon)
+#   julianh2o/bawdy-lights-web      browser sequencer UI         (Dockerfile.web)
 #
 # Usage: ./scripts/docker-build.sh [--push] [--version VERSION] [--only daemon|web]
 #   PLATFORM=linux/amd64,linux/arm64 ./scripts/docker-build.sh --push   # multi-arch (push only)
@@ -61,13 +61,13 @@ OUTPUT=$([ "$PUSH" = true ] && echo "--push" || echo "--load")
 
 # name | dockerfile | target
 IMAGES=(
-    "bawdy-daemon|Dockerfile.daemon|daemon"
-    "bawdy-web|Dockerfile.web|"
+    "bawdy-lights-daemon|Dockerfile.daemon|daemon"
+    "bawdy-lights-web|Dockerfile.web|"
 )
 
 for spec in "${IMAGES[@]}"; do
     IFS='|' read -r NAME DOCKERFILE TARGET <<< "$spec"
-    if [ -n "$ONLY" ] && [ "$NAME" != "bawdy-$ONLY" ]; then
+    if [ -n "$ONLY" ] && [ "$NAME" != "bawdy-lights-$ONLY" ]; then
         continue
     fi
     IMAGE_NAME="$REGISTRY_USER/$NAME"
