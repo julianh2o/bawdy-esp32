@@ -19,6 +19,9 @@ class PatchTable:
     def __init__(self, name: str = "Default Patch") -> None:
         self.name = name
         self._segments: list[PatchSegment] = []
+        # Declared per-channel LED counts, e.g. {"wled_01": [270, 270, 270]}, matching the
+        # board's physical outputs. A channel is never shorter than its furthest segment.
+        self.channel_lengths: dict[str, list[int]] = {}
 
     def add_segment(self, segment: PatchSegment) -> None:
         """Add a patch segment to the table."""
@@ -105,11 +108,16 @@ class PatchTable:
         return sorted(list({s.channel_index for s in self.get_segments_for_controller(controller_id)}))
 
     def get_channel_pixel_length(self, controller_id: str, channel_index: int) -> int:
-        """Compute the maximum pixel buffer length required for a controller channel."""
+        """Pixel length of a controller channel: its declared length, or its furthest segment if longer.
+
+        Channels are packed back to back into one DDP stream, so this is also what puts each
+        channel's data at the right offset. Without a declared length, a partly-mapped channel
+        shrinks and shifts every later channel off its physical output.
+        """
+        declared = self.channel_lengths.get(controller_id, [])
+        length = declared[channel_index] if channel_index < len(declared) else 0
         segs = [s for s in self._segments if s.controller_id == controller_id and s.channel_index == channel_index]
-        if not segs:
-            return 0
-        return max(s.port_end for s in segs)
+        return max([length] + [s.port_end for s in segs])
 
     def validate(self) -> list[str]:
         """Validate patch table for hardware collisions and overlap errors.
@@ -135,6 +143,14 @@ class PatchTable:
                             f"Fixture '{s1.fixture_id}' [{s1.port_offset}..{s1.port_end}] overlaps with "
                             f"Fixture '{s2.fixture_id}' [{s2.port_offset}..{s2.port_end}]"
                         )
+
+        for s in self._segments:
+            declared = self.channel_lengths.get(s.controller_id, [])
+            if s.channel_index < len(declared) and declared[s.channel_index] and s.port_end > declared[s.channel_index]:
+                errors.append(
+                    f"Channel Overflow on Controller '{s.controller_id}' Channel {s.channel_index}: "
+                    f"Fixture '{s.fixture_id}' ends at {s.port_end} but the channel has {declared[s.channel_index]} LEDs"
+                )
         return errors
 
     def unpack_controller_buffers_to_fixtures(
@@ -213,16 +229,21 @@ class PatchTable:
         return fixture_bytes
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "name": self.name,
             "segments": [s.to_dict() for s in self._segments],
         }
+        if self.channel_lengths:
+            data["channel_lengths"] = {cid: list(lengths) for cid, lengths in self.channel_lengths.items()}
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PatchTable:
         table = cls(name=data.get("name", "Default Patch"))
         for s_data in data.get("segments", []):
             table.add_segment(PatchSegment.from_dict(s_data))
+        for cid, lengths in (data.get("channel_lengths") or {}).items():
+            table.channel_lengths[str(cid)] = [max(0, int(n)) for n in lengths]
         return table
 
     def save_json(self, path: Path | str) -> None:

@@ -268,6 +268,9 @@ The engine includes a built-in HTTP REST API daemon (`EngineDaemon`) on port `87
 | `GET` | `/api/universe/presets` | List catalog of available venue presets with fixture, pixel, and zone metadata |
 | `POST` | `/api/universe` | Switch active venue universe (`{"preset": "warehouse_rave"}`) |
 | `GET` | `/api/patch` | Retrieve active hardware patch table and collision validation |
+| `GET` | `/api/config` | Active controller endpoints, unassigned controllers, and boards being identified |
+| `POST` | `/api/config/reload` | Re-read universe, patch, and controllers files and apply them live (previous config kept on error) |
+| `POST` | `/api/identify` | Blink a board white (`{"ip": "10.0.0.5", "led_count": 300}` or `{"controller_id": "wled_01"}`; `"led_start": 270` blinks only LEDs from there on, e.g. one output; `"stop": true` ends it) |
 | `POST` | `/api/events` | Publish an event to the reactive rule engine |
 
 ### Example Curl Commands

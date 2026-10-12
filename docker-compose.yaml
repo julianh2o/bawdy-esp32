@@ -52,15 +52,24 @@ services:
     container_name: bawdy-lights-web
     network_mode: host
     restart: unless-stopped
+    # Only start ordering, not health: on a fresh install the daemon can't start until
+    # controllers.json has board IPs, and the web UI's /config page is how you create it.
     depends_on:
       daemon:
-        condition: service_healthy
+        condition: service_started
     environment:
       SEQUENCER_HOST: 0.0.0.0
       SEQUENCER_PORT: ${WEB_PORT:-8080}
       ENGINE_URL: http://127.0.0.1:${DAEMON_PORT:-8765}
+      # Edited by the /config page, which finds WLED boards over mDNS (needs host networking).
+      CONTROLLERS_FILE: /config/controllers.json
+      PATCH_FILE: /config/patch.json
+      UNIVERSE_FILE: /config/universe.json
     volumes:
       - sequences:/data/sequences
+      # Read-write so /config can save controllers.json. The container runs as uid 10001,
+      # so the file must be writable by it (see docs/DEPLOYMENT.md).
+      - ./config:/config
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:${WEB_PORT:-8080}/api/sequences', timeout=2)"]
       interval: 10s

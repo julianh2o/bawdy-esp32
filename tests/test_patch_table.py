@@ -125,3 +125,44 @@ class TestPatchTable(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+
+
+class TestDeclaredChannelLengths(unittest.TestCase):
+    """channel_lengths keeps each channel's data on its physical WLED output."""
+
+    def make(self) -> "PatchTable":
+        from wled_engine.patch.patch_table import PatchTable
+
+        table = PatchTable.from_dict({
+            "segments": [
+                {"fixture_id": "a", "pixel_count": 100, "controller_id": "c", "channel_index": 0},
+                {"fixture_id": "b", "pixel_count": 10, "controller_id": "c", "channel_index": 1},
+            ],
+            "channel_lengths": {"c": [270, 270]},
+        })
+        return table
+
+    def test_partly_mapped_channel_keeps_declared_length(self) -> None:
+        table = self.make()
+        self.assertEqual(table.get_channel_pixel_length("c", 0), 270)
+        self.assertEqual(table.to_dict()["channel_lengths"], {"c": [270, 270]})
+
+    def test_sampler_places_second_channel_at_declared_offset(self) -> None:
+        from wled_app.domain.color import Color
+        from wled_engine.spatial.fixtures import LinearStripFixture
+        from wled_engine.spatial.coordinates import Point3D
+        from wled_engine.spatial.sampler import SpatialSampler
+        from wled_engine.spatial.universe import SpatialUniverse
+
+        uni = SpatialUniverse()
+        for fid, n in (("a", 100), ("b", 10)):
+            uni.add_fixture(LinearStripFixture(fid, fid, n, [Point3D(0, 0, 0), Point3D(1, 0, 0)]))
+        bufs = SpatialSampler(uni, self.make()).route_fixture_colors_to_controllers(
+            {"a": [Color(0, 0, 0)] * 100, "b": [Color(255, 255, 255)] * 10}
+        )
+        self.assertEqual([len(b) for b in bufs["c"]], [270 * 3, 270 * 3])
+
+    def test_validate_reports_overflow(self) -> None:
+        table = self.make()
+        table.channel_lengths["c"] = [50, 270]
+        self.assertTrue(any("Channel Overflow" in e for e in table.validate()))

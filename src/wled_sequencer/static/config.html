@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lighting Setup</title>
+  <link rel="stylesheet" href="/css/config.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-title">
+      <a href="/" class="back-link" title="Back to the sequencer">← Sequencer</a>
+      <h1>Lighting setup</h1>
+      <span id="daemon-status" class="pill">Daemon…</span>
+    </div>
+    <div class="topbar-actions">
+      <span id="dirty-indicator" class="muted"></span>
+      <button id="revert-btn" class="btn">Revert</button>
+      <button id="save-btn" class="btn btn-primary">Save &amp; apply</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <main class="single">
+    <section aria-labelledby="controllers-heading">
+      <div class="column-head">
+        <h2 id="controllers-heading">Controllers</h2>
+        <button id="add-controller-btn" class="btn btn-small" title="Add a controller by hand">+ Add</button>
+      </div>
+      <p class="column-sub muted">Adopted WLED boards. Expand one to name its channels (LED outputs).</p>
+      <div id="controllers-list" class="stack"></div>
+      <details id="discovery" class="discovery">
+        <summary id="discovery-summary">Looking for boards…</summary>
+        <div class="discovery-body">
+          <div class="row">
+            <span id="discovery-status" class="muted small"></span>
+            <span class="spacer"></span>
+            <button id="rescan-btn" class="btn btn-small">Rescan</button>
+          </div>
+          <div id="discovered-list" class="stack"></div>
+          <form id="probe-form" class="row">
+            <input type="text" id="probe-ip" placeholder="Add by IP, e.g. 192.168.1.50" aria-label="Board IP address">
+            <button class="btn btn-small" type="submit">Probe</button>
+          </form>
+        </div>
+      </details>
+    </section>
+  </main>
+
+  <footer id="file-paths" class="footer muted small"></footer>
+
+  <!-- Adopt / edit controller -->
+  <dialog id="controller-dialog" class="dialog dialog-narrow">
+    <form method="dialog" id="controller-form">
+      <h3 id="c-title">Adopt board</h3>
+      <p id="c-summary" class="muted"></p>
+      <label>Controller ID
+        <input type="text" id="c-id" placeholder="e.g. wled_01" pattern="[A-Za-z0-9_.\-]{1,64}">
+      </label>
+      <label>IP address <input type="text" id="c-ip" required></label>
+      <label>DDP port <input type="number" id="c-port" min="1" max="65535" required></label>
+      <ul id="c-errors" class="errors"></ul>
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-danger" id="c-remove">Remove</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn" id="c-cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="c-ok">Adopt</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="/js/config.js"></script>
+</body>
+</html>

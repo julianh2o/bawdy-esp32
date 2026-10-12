@@ -9,8 +9,9 @@ from dataclasses import dataclass
 from wled_app.domain.color import Color
 from wled_app.domain.device import DeviceConfig
 from wled_app.domain.frame import FrameBuffer
-from wled_app.network.udp_client import UdpSender
+from wled_app.network.udp_client import MockUdpClient, UdpClient, UdpSender
 from wled_app.protocols.base import ProtocolEmitter
+from wled_app.protocols.ddp import DdpEmitter
 from wled_app.patterns.base import Pattern, PatternConfig
 from wled_engine.blend import BlendMode
 from wled_engine.clock import FrameClock
@@ -18,6 +19,7 @@ from wled_engine.compositor import LayerStack
 from wled_engine.events import EventBus
 from wled_engine.fleet import DeviceFleet, DeviceNode
 from wled_engine.fleet.dispatcher import MultiNodeDispatcher
+from wled_engine.identify import IdentifyScheduler
 from wled_engine.layer import Layer
 from wled_engine.sequence_runner import SequenceRunner
 from wled_engine.patch.patch_table import PatchTable
@@ -68,6 +70,16 @@ class LightingEngine:
         self.dispatcher: MultiNodeDispatcher | None = None
         self.spatial_sampler: SpatialSampler | None = None
         self.spatial_pattern_func: Callable[[Point3D], Color] | None = None
+        # Patch controllers with no configured IP (skipped, see setup_universe(allow_missing=True)).
+        self.unconfigured_controllers: list[str] = []
+        # Set by the daemon CLI when started from config files; enables /api/config/reload.
+        self.daemon_config: object | None = None
+
+        # Guards swapping universe/patch/dispatcher against the frame thread.
+        self._config_lock = threading.RLock()
+        self.identify = IdentifyScheduler()
+        self._identify_sender: UdpSender | None = None
+        self._identify_emitter = DdpEmitter()
 
         self._tick: int = 0
         self._stop_event = threading.Event()
@@ -148,6 +160,7 @@ class LightingEngine:
         controller_ports: dict[str, int] | None = None,
         dry_run: bool | None = None,
         simulator: bool | None = None,
+        allow_missing: bool = False,
     ) -> None:
         """Register spatial universe, patch table, and configure Cat6 multi-node dispatcher.
 
@@ -155,33 +168,46 @@ class LightingEngine:
         ``controller_ports`` (default 4048, the real WLED DDP port). In simulator
         mode, unlisted controllers go to 127.0.0.1 on ports 4048+idx. ``simulator``
         defaults to True when no ``controller_ips`` are given (legacy behaviour);
-        otherwise a controller without an IP raises ``ValueError``.
+        otherwise a controller without an IP raises ``ValueError``, or with
+        ``allow_missing`` is skipped and listed in ``unconfigured_controllers``.
+
+        Safe to call while the engine is running: the new configuration is built
+        first and swapped in between frames.
         """
-        self.universe = universe
-        self.patch_table = patch_table
-        self.spatial_sampler = SpatialSampler(universe, patch_table)
-
-        use_dry = self.dry_run if dry_run is None else dry_run
-        self.dispatcher = MultiNodeDispatcher(
-            broadcast_ip=broadcast_ip,
-            sync_port=sync_port,
-            dry_run=use_dry,
-        )
-
         ips = controller_ips or {}
         ports = controller_ports or {}
         if simulator is None:
             simulator = not ips
         controllers = patch_table.get_controllers()
-        missing = [cid for cid in controllers if cid not in ips]
-        if missing and not simulator:
+        missing = [cid for cid in controllers if cid not in ips] if not simulator else []
+        if missing and not allow_missing:
             raise ValueError(f"No IP configured for controller(s): {', '.join(missing)}")
+
+        use_dry = self.dry_run if dry_run is None else dry_run
+        dispatcher = MultiNodeDispatcher(
+            broadcast_ip=broadcast_ip,
+            sync_port=sync_port,
+            dry_run=use_dry,
+        )
         for idx, cid in enumerate(controllers):
             if cid in ips:
                 ip, port = ips[cid], ports.get(cid, 4048)
-            else:
+            elif simulator:
                 ip, port = "127.0.0.1", ports.get(cid, 4048 + idx)
-            self.dispatcher.add_node(node_id=cid, ip=ip, port=port)
+            else:
+                continue
+            dispatcher.add_node(node_id=cid, ip=ip, port=port)
+        sampler = SpatialSampler(universe, patch_table)
+
+        with self._config_lock:
+            old = self.dispatcher
+            self.universe = universe
+            self.patch_table = patch_table
+            self.spatial_sampler = sampler
+            self.dispatcher = dispatcher
+            self.unconfigured_controllers = missing
+        if old is not None:
+            old.close()
 
     # Backward compatibility alias
     configure_universe = setup_universe
@@ -204,21 +230,35 @@ class LightingEngine:
 
         frames: dict[str, FrameBuffer] = {}
 
+        identify_frames = self.identify.frames(time.monotonic())
+
         # 1. Multi-node Spatial Universe sampling & Cat6 broadcast sync
-        if (
-            self.universe is not None
-            and self.spatial_sampler is not None
-            and self.dispatcher is not None
-            and self.spatial_pattern_func is not None
-        ):
-            fixture_colors = self.spatial_sampler.sample_field_to_fixtures(self.spatial_pattern_func)
-            controller_buffers = self.spatial_sampler.route_fixture_colors_to_controllers(
-                fixture_colors,
-                master_brightness=self.master_brightness,
-            )
-            self.dispatcher.dispatch_channel_buffers(controller_buffers, sync=True)
-            if self.on_universe_frame:
-                self.on_universe_frame(fixture_colors, self.clock.actual_fps, current_tick)
+        with self._config_lock:
+            if (
+                self.universe is not None
+                and self.spatial_sampler is not None
+                and self.dispatcher is not None
+                and self.spatial_pattern_func is not None
+            ):
+                fixture_colors = self.spatial_sampler.sample_field_to_fixtures(self.spatial_pattern_func)
+                controller_buffers = self.spatial_sampler.route_fixture_colors_to_controllers(
+                    fixture_colors,
+                    master_brightness=self.master_brightness,
+                )
+                # A board being identified shows the blink instead of the show.
+                if identify_frames:
+                    for cid in controller_buffers:
+                        node = self.dispatcher.get_node(cid)
+                        frame = identify_frames.pop((node.ip, node.port), None) if node else None
+                        if frame is not None:
+                            controller_buffers[cid] = [bytearray(frame)]
+                self.dispatcher.dispatch_channel_buffers(controller_buffers, sync=True)
+                if self.on_universe_frame:
+                    self.on_universe_frame(fixture_colors, self.clock.actual_fps, current_tick)
+
+        # Boards that got no show frame above (idle engine, or not in the patch).
+        for (ip, port), frame in identify_frames.items():
+            self._send_identify_frame(ip, port, frame)
 
         # 2. Legacy / Individual Device Fleet composition
         for node in self.fleet._nodes.values():
@@ -238,6 +278,30 @@ class LightingEngine:
             self._tick += 1
 
         return frames
+
+    def start_identify(
+        self, ip: str, port: int = 4048, led_count: int | None = None, seconds: float | None = None, led_start: int = 0,
+    ) -> None:
+        """Blink a board (by IP), or LEDs ``led_start`` onward, for a few seconds, overriding its show output."""
+        from wled_engine.identify import DEFAULT_IDENTIFY_LEDS, DEFAULT_IDENTIFY_SECONDS
+
+        self.identify.start(
+            ip,
+            port,
+            led_count or DEFAULT_IDENTIFY_LEDS,
+            seconds or DEFAULT_IDENTIFY_SECONDS,
+            now=time.monotonic(),
+            led_start=led_start,
+        )
+
+    def _send_identify_frame(self, ip: str, port: int, frame: bytes) -> None:
+        if self._identify_sender is None:
+            self._identify_sender = MockUdpClient() if self.dry_run else UdpClient()
+        packets = self._identify_emitter.encode_raw_bytes(frame, push=True)
+        try:
+            self._identify_sender.send_packets(ip, port, packets)
+        except OSError:
+            pass
 
     def run(self, max_frames: int | None = None, close_on_exit: bool = True) -> None:
         """Run engine synchronously until stopped or max_frames reached.
@@ -315,22 +379,23 @@ class LightingEngine:
             layer.reset()
 
         # 1. Flush black frame to MultiNodeDispatcher (Cat6 20-node universe)
-        if (
-            self.universe is not None
-            and self.spatial_sampler is not None
-            and self.dispatcher is not None
-        ):
-            black_fixture_colors = {
-                f.id: [Color.black() for _ in range(f.pixel_count)]
-                for f in self.universe.fixtures
-            }
-            controller_buffers = self.spatial_sampler.route_fixture_colors_to_controllers(
-                black_fixture_colors,
-                master_brightness=0.0,
-            )
-            self.dispatcher.dispatch_channel_buffers(controller_buffers, sync=True)
-            if self.on_universe_frame:
-                self.on_universe_frame(black_fixture_colors, self.clock.actual_fps, self._tick)
+        with self._config_lock:
+            if (
+                self.universe is not None
+                and self.spatial_sampler is not None
+                and self.dispatcher is not None
+            ):
+                black_fixture_colors = {
+                    f.id: [Color.black() for _ in range(f.pixel_count)]
+                    for f in self.universe.fixtures
+                }
+                controller_buffers = self.spatial_sampler.route_fixture_colors_to_controllers(
+                    black_fixture_colors,
+                    master_brightness=0.0,
+                )
+                self.dispatcher.dispatch_channel_buffers(controller_buffers, sync=True)
+                if self.on_universe_frame:
+                    self.on_universe_frame(black_fixture_colors, self.clock.actual_fps, self._tick)
 
         # 2. Flush black frame to individual device Fleet nodes
         for node in self.fleet._nodes.values():
@@ -344,3 +409,6 @@ class LightingEngine:
         self.fleet.close()
         if self.dispatcher is not None:
             self.dispatcher.close()
+        if self._identify_sender is not None:
+            self._identify_sender.close()
+            self._identify_sender = None

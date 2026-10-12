@@ -212,52 +212,32 @@ def cmd_daemon(args: argparse.Namespace, console: Console, repo: DeviceRepositor
 
     if getattr(args, "venue", False) or getattr(args, "universe", None) or getattr(args, "preset", None):
         from pathlib import Path
-        from wled_engine.spatial.universe import SpatialUniverse
-        from wled_engine.patch.patch_table import PatchTable
-        if getattr(args, "preset", None):
-            from wled_engine.spatial.venue import get_preset_venue
-            universe, patch_table = get_preset_venue(args.preset)
-        elif getattr(args, "venue", False):
-            from wled_engine.spatial.venue import create_demo_venue
-            universe, patch_table = create_demo_venue()
-        else:
-            universe = SpatialUniverse.load_json(args.universe)
-            patch_file = args.patch or (Path(args.universe).parent / "patch.json")
-            patch_table = PatchTable.load_json(patch_file)
+        from wled_engine.daemon_config import DaemonConfig
 
-        from wled_engine.controllers import load_controllers
-        patch_path = getattr(args, "patch", None) or (
-            Path(args.universe).parent / "patch.json" if getattr(args, "universe", None) else None
+        universe_path = getattr(args, "universe", None)
+        patch_path = getattr(args, "patch", None) or (Path(universe_path).parent / "patch.json" if universe_path else None)
+        config = DaemonConfig(
+            universe_path=Path(universe_path) if universe_path else None,
+            patch_path=Path(patch_path) if patch_path else None,
+            controllers_path=getattr(args, "controllers", None),
+            preset=getattr(args, "preset", None),
+            venue=bool(getattr(args, "venue", False)),
+            simulator=bool(getattr(args, "simulator", False)) or args.dry_run,
+            broadcast_ip=getattr(args, "broadcast_ip", None) or "255.255.255.255",
         )
-        simulator = bool(getattr(args, "simulator", False)) or args.dry_run
-        controllers_path = getattr(args, "controllers", None)
-        if simulator and controllers_path and not Path(controllers_path).is_file():
-            controllers_path = None  # e.g. image default path when running against the simulator
         try:
-            controller_ips, controller_ports = load_controllers(controllers_path, patch_path)
+            summary = config.apply(engine, config.load())
         except (OSError, ValueError) as e:
-            console.print(f"[bold red]Invalid controllers config:[/bold red] {e}")
+            console.print(f"[bold red]Invalid configuration:[/bold red] {e}")
             sys.exit(2)
-        if not controller_ips and not simulator:
-            console.print(
-                "[bold red]No controller IPs configured.[/bold red] Provide --controllers FILE "
-                "(or a 'controllers' section in patch.json), or pass --simulator to target the local simulator."
-            )
-            sys.exit(2)
-        try:
-            engine.setup_universe(
-                universe,
-                patch_table,
-                broadcast_ip=getattr(args, "broadcast_ip", None) or "255.255.255.255",
-                controller_ips=controller_ips,
-                controller_ports=controller_ports,
-                dry_run=args.dry_run,
-                simulator=simulator,
-            )
-        except ValueError as e:
-            console.print(f"[bold red]{e}[/bold red]")
-            sys.exit(2)
+        universe, patch_table = engine.universe, engine.patch_table
         console.print(f"[bold green]🌐 Spatial Universe Active:[/bold green] [cyan]{universe.name}[/cyan] ({universe.total_pixels} pixels across {len(patch_table.get_controllers())} Cat6 controller nodes)")
+        if summary["unconfigured_controllers"]:
+            console.print(
+                f"[bold yellow]No IP configured for:[/bold yellow] {', '.join(summary['unconfigured_controllers'])}. "
+                "These get no output until they're adopted on the web UI's /config page "
+                "(or added to the controllers file) and the config is reloaded (POST /api/config/reload)."
+            )
         for node in engine.dispatcher.nodes:
             console.print(f"  • {node.node_id} -> {node.ip}:{node.port}")
     elif args.device:

@@ -24,13 +24,38 @@ cp config/patch.json.example      config/patch.json
 cp config/controllers.json.example config/controllers.json
 ```
 
-Edit `config/controllers.json` to map each controller id in `patch.json` to its board:
+Then adopt your boards, either in the web UI or by hand. The board-to-fixture mapping lives in `patch.json`, which is edited by hand for now.
+
+**Web UI (`http://<docker-host>:8080/config`)** lists the adopted controllers. Each one expands into its channels: the board's LED outputs, with GPIO pins and LED counts read from the board. Give each channel a name there. Below the list, a collapsed "N unadopted boards discovered" section shows boards found on the LAN that aren't adopted yet; adopting one opens its channels, ready to name. **Identify** blinks LEDs white for a few seconds so you can tell which physical strip is which: on a board it blinks every LED, on a channel only that output's LEDs. It works before adopting, and falls back to sending directly from the web container if the daemon is down.
+
+**Save & apply** writes `config/controllers.json` and tells the daemon to reload it, so changes take effect within a frame.
+
+- Discovery uses mDNS: every WLED board advertises `_wled._tcp`, named by its mDNS address (*Config → WiFi Setup*). mDNS is multicast and doesn't cross subnets or VLANs, so boards elsewhere can be added with **Add by IP**, which reads `http://<ip>/json/info`. **Rescan** queries the network again right away.
+- Adopting stores the board's MAC address. If the board later shows up at a different IP, the page offers to update the IP.
+- Channel names are stored per controller, in output order: `"channels": [{"name": "Front truss"}, {"name": "Back wall"}]`.
+- If `patch.json` gives `"channel_lengths": {"wled_01": [270, 270, 270]}`, the engine pads each channel to that length. It sends a board's channels back to back in one DDP stream, so without them a partly mapped channel would shift every later channel onto the wrong output. They must match the board's LED outputs (*LED Preferences*).
+- The web container runs as uid 10001 and needs write access to the file:
+  ```sh
+  cp config/controllers.json.example config/controllers.json   # or: echo '{}' > config/controllers.json
+  chmod a+w config/controllers.json
+  ```
+  Without that, the page is read-only and says why.
+
+**By hand:** edit `config/controllers.json`:
 
 ```json
 { "wled_01": { "ip": "192.168.1.101", "port": 4048 } }
 ```
 
-`port` defaults to 4048. You can instead embed the same mapping as a top-level `"controllers"` key in `patch.json`; entries in `controllers.json` override it. The daemon refuses to start if a controller has no IP (unless `--simulator`/`--dry-run`).
+`port` defaults to 4048. Extra keys (the page stores `name`, `mac`, `host` and `channels`) are ignored by the daemon. You can instead embed the same mapping as a top-level `"controllers"` key in `patch.json`; entries in `controllers.json` override it. A controller in the patch with no IP gets no output; the daemon starts anyway and lists it in a warning, so a fresh install can be configured from the web UI.
+
+After editing config files by hand, apply them without a restart:
+
+```sh
+curl -X POST http://<docker-host>:8765/api/config/reload
+```
+
+This re-reads `controllers.json` and the universe/patch files. If anything is invalid, the daemon keeps running the previous config and returns the error.
 
 Set `WLED_BROADCAST_IP` in `.env` to your subnet broadcast (e.g. `192.168.1.255`). The default `255.255.255.255` works on many networks but some routers/OSes drop it.
 

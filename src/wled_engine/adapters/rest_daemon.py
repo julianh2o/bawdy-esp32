@@ -151,6 +151,15 @@ def handle_rest_request(
                 "validation": engine.patch_table.validate(),
             }
 
+        if clean_path == "/api/config":
+            from wled_engine.daemon_config import summarize
+            return 200, {
+                "status": "ok",
+                "reloadable": engine.daemon_config is not None,
+                **summarize(engine),
+                "identifying": [f"{ip}:{port}" for ip, port in engine.identify.active],
+            }
+
         if clean_path == "/api/fleet/nodes":
             if not engine.dispatcher:
                 return 200, {"status": "ok", "nodes": {}}
@@ -344,6 +353,47 @@ def handle_rest_request(
                     engine.patch_table = p
                 return 200, {"status": "ok", "patch": p.to_dict(), "validation": p.validate()}
             return 400, {"status": "error", "message": "Expected 'path' or 'patch' dict"}
+
+        if clean_path == "/api/config/reload":
+            config = engine.daemon_config
+            if config is None:
+                return 409, {"status": "error", "message": "Daemon was not started from config files; nothing to reload"}
+            try:
+                loaded = config.load()
+            except (OSError, ValueError, KeyError) as e:
+                # Keep running the previous configuration.
+                return 400, {"status": "error", "message": f"Config not reloaded: {e}"}
+            return 200, {"status": "ok", **config.apply(engine, loaded)}
+
+        if clean_path == "/api/identify":
+            ip = str(body.get("ip") or "").strip()
+            port = body.get("port")
+            led_count = body.get("led_count")
+            cid = body.get("controller_id")
+            if cid:
+                node = engine.dispatcher.get_node(str(cid)) if engine.dispatcher else None
+                if node is None:
+                    return 404, {"status": "error", "message": f"Controller '{cid}' has no configured IP"}
+                ip, port = node.ip, node.port
+                if not led_count and engine.patch_table:
+                    led_count = sum(
+                        engine.patch_table.get_channel_pixel_length(node.node_id, ch)
+                        for ch in range(max(engine.patch_table.get_channel_indices(node.node_id), default=-1) + 1)
+                    )
+            if not ip:
+                return 400, {"status": "error", "message": "Expected 'ip' or 'controller_id'"}
+            try:
+                port = int(port or 4048)
+                led_count = int(led_count) if led_count else None
+                led_start = int(body.get("led_start") or 0)
+                seconds = float(body["seconds"]) if body.get("seconds") else None
+            except (TypeError, ValueError) as e:
+                return 400, {"status": "error", "message": f"Invalid identify request: {e}"}
+            if body.get("stop"):
+                engine.identify.cancel(ip, port)
+                return 200, {"status": "ok", "ip": ip, "port": port, "stopped": True}
+            engine.start_identify(ip, port, led_count=led_count, seconds=seconds, led_start=led_start)
+            return 200, {"status": "ok", "ip": ip, "port": port, "led_count": led_count, "running": engine.is_running}
 
         if clean_path == "/api/spatial/pattern":
             pat_name = str(body.get("pattern", "sweep")).lower()
