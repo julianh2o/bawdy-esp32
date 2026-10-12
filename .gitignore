@@ -1,2 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+.coverage
+htmlcov/
+
+# Java / Maven
+sequencer-java/target/
+target/
+
+# macOS
 .DS_Store
-.DS_Store
+
+# Editors / IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Runtime state
+logs/
+data/devices/
+
+# Deployment config
+.env
+config/*.json

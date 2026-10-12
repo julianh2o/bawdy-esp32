@@ -42,6 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Local Web UI port (default: 8080)",
     )
     parser.add_argument(
+        "--web-host",
+        default="127.0.0.1",
+        help="Web UI bind address (default: 127.0.0.1; use 0.0.0.0 in containers)",
+    )
+    parser.add_argument(
         "--no-browser",
         action="store_true",
         help="Do not automatically open web browser on startup",
@@ -164,6 +169,7 @@ def main() -> None:
             patch_table=patch_table,
             base_port=args.port,
             web_port=args.web_port,
+            web_host=args.web_host,
         )
 
         try:

@@ -1,0 +1,63 @@
+# Headless lighting engine (REST API + DDP output to WLED boards).
+#
+#   docker build -f Dockerfile.daemon -t bawdy-lights-daemon .
+#   docker build -f Dockerfile.daemon --target sim -t bawdy-lights-sim .   # optional simulator image
+FROM python:3.12-slim AS base
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app/src
+
+RUN useradd --create-home --uid 10001 wled
+WORKDIR /app
+
+RUN pip install --no-cache-dir "rich>=13.0.0" "prompt_toolkit>=3.0.0"
+
+COPY run.py sim.py ./
+COPY src ./src
+# Built-in presets are baked in as defaults; real config is mounted at /config.
+COPY data/presets ./data/presets
+
+# --- simulator (virtual WLED boards + web visualizer) -----------------------
+FROM base AS sim
+RUN pip install --no-cache-dir "aiohttp>=3.9"
+USER wled
+EXPOSE 8080
+CMD ["python", "sim.py", "--universe", "/config/universe.json", "--patch", "/config/patch.json", "--web-host", "0.0.0.0", "--no-browser"]
+
+# --- daemon (default target) ------------------------------------------------
+FROM base AS daemon
+
+ARG VERSION=unknown
+ARG BUILD_DATE
+ARG VCS_REF
+
+LABEL org.opencontainers.image.title="bawdy-lights-daemon"
+LABEL org.opencontainers.image.description="Headless WLED lighting engine: REST API + DDP output to WLED boards"
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.created="${BUILD_DATE}"
+LABEL org.opencontainers.image.revision="${VCS_REF}"
+LABEL org.opencontainers.image.authors="Julian Hartline <https://www.julianhartline.com>"
+LABEL org.opencontainers.image.url="https://hub.docker.com/r/julianh2o/bawdy-lights-daemon"
+LABEL org.opencontainers.image.source="https://github.com/julianh2o/bawdy-esp32"
+
+# All settings can be overridden with env vars (WLED_*) or by appending CLI args.
+# The API binds all interfaces so the web UI and the Java Universe Manager can reach it.
+# It has no authentication (see TODO.md #7); set WLED_API_HOST=127.0.0.1 to keep it local.
+ENV APP_VERSION="${VERSION}" \
+    WLED_API_HOST=0.0.0.0 \
+    WLED_API_PORT=8765 \
+    WLED_FPS=30 \
+    WLED_UNIVERSE=/config/universe.json \
+    WLED_PATCH=/config/patch.json \
+    WLED_CONTROLLERS=/config/controllers.json
+# (a missing controllers.json is only tolerated with WLED_SIMULATOR=true)
+
+USER wled
+EXPOSE 8765
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
+    CMD python -c "import os,urllib.request as u; u.urlopen('http://127.0.0.1:%s/api/status' % os.environ.get('WLED_API_PORT','8765'), timeout=2)"
+
+# Exec form so the Python process is PID 1 and receives SIGTERM (blackout on stop).
+ENTRYPOINT ["python", "run.py", "daemon"]

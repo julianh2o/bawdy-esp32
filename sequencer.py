@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 import argparse
+import os
+import signal
 import subprocess
 import sys
 import time
@@ -30,23 +32,28 @@ def parse_args() -> argparse.ArgumentParser:
     parser.add_argument(
         "--port",
         type=int,
-        default=8081,
-        help="Web port for web mode (default: 8081)",
+        default=int(os.environ.get("SEQUENCER_PORT") or 8081),
+        help="Web port for web mode (default: 8081) [SEQUENCER_PORT]",
     )
     parser.add_argument(
         "--host",
-        default="127.0.0.1",
-        help="Host address for web mode (default: 127.0.0.1)",
+        default=os.environ.get("SEQUENCER_HOST") or "127.0.0.1",
+        help="Host address for web mode (default: 127.0.0.1) [SEQUENCER_HOST]",
     )
     parser.add_argument(
         "--engine",
-        default="http://127.0.0.1:8765",
-        help="Target Lighting Engine REST URL (default: http://127.0.0.1:8765)",
+        default=os.environ.get("ENGINE_URL") or "http://127.0.0.1:8765",
+        help="Target Lighting Engine REST URL, proxied to the browser at /engine (default: http://127.0.0.1:8765) [ENGINE_URL]",
     )
     parser.add_argument(
         "--no-browser",
         action="store_true",
-        help="Do not automatically open web browser in web mode",
+        help="Do not automatically open web browser in web mode (server-only; also set for containers)",
+    )
+    parser.add_argument(
+        "--sequences",
+        default=os.environ.get("SEQUENCES_DIR") or None,
+        help="Directory for saved sequences (default: ./sequences) [SEQUENCES_DIR]",
     )
     return parser
 
@@ -95,7 +102,9 @@ def run_web_app(args: argparse.Namespace, console: Console) -> None:
     import webbrowser
     from wled_sequencer.server import SequencerAppServer
 
-    app_server = SequencerAppServer(host=args.host, port=args.port)
+    app_server = SequencerAppServer(
+        host=args.host, port=args.port, sequences_dir=args.sequences, engine_url=args.engine
+    )
     app_server.start()
 
     url = f"http://{args.host}:{app_server.port}"
@@ -117,6 +126,11 @@ def run_web_app(args: argparse.Namespace, console: Console) -> None:
         except Exception:
             pass
 
+    # Treat SIGTERM (docker stop) like Ctrl+C so PID 1 shuts down promptly.
+    def _raise_interrupt(*_: object) -> None:
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, _raise_interrupt)
     try:
         while True:
             time.sleep(1.0)

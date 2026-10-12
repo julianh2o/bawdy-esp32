@@ -1,0 +1,762 @@
+{
+  "name": "Metro Concert Hall & Lounge",
+  "bounding_box": {
+    "min_x": -6.5,
+    "min_y": -6.5,
+    "min_z": 0.0,
+    "max_x": 6.5,
+    "max_y": 7.0,
+    "max_z": 4.5,
+    "width": 13.0,
+    "height": 13.5,
+    "depth": 4.5
+  },
+  "total_pixels": 5153,
+  "fixtures": [
+    {
+      "type": "linear_strip",
+      "id": "truss_roof_front",
+      "name": "Front Stage Truss Span",
+      "pixel_count": 600,
+      "waypoints": [
+        {
+          "x": -6.0,
+          "y": 4.0,
+          "z": 4.0
+        },
+        {
+          "x": 6.0,
+          "y": 4.0,
+          "z": 4.0
+        }
+      ],
+      "reversed": false,
+      "group": "trusses",
+      "color_order": "GRB",
+      "tags": [
+        "front",
+        "overhead",
+        "stage"
+      ]
+    },
+    {
+      "type": "linear_strip",
+      "id": "truss_leg_front_left",
+      "name": "Front Left Truss Upright",
+      "pixel_count": 200,
+      "waypoints": [
+        {
+          "x": -6.0,
+          "y": 4.0,
+          "z": 4.0
+        },
+        {
+          "x": -6.0,
+          "y": 4.0,
+          "z": 0.0
+        }
+      ],
+      "reversed": false,
+      "group": "trusses",
+      "color_order": "GRB",
+      "tags": [
+        "left",
+        "stage",
+        "upright"
+      ]
+    },
+    {
+      "type": "linear_strip",
+      "id": "truss_leg_front_right",
+      "name": "Front Right Truss Upright",
+      "pixel_count": 200,
+      "waypoints": [
+        {
+          "x": 6.0,
+          "y": 4.0,
+          "z": 4.0
+        },
+        {
+          "x": 6.0,
+          "y": 4.0,
+          "z": 0.0
+        }
+      ],
+      "reversed": false,
+      "group": "trusses",
+      "color_order": "GRB",
+      "tags": [
+        "right",
+        "stage",
+        "upright"
+      ]
+    },
+    {
+      "type": "linear_strip",
+      "id": "truss_roof_rear",
+      "name": "Rear Stage Truss Span",
+      "pixel_count": 500,
+      "waypoints": [
+        {
+          "x": -5.0,
+          "y": 7.0,
+          "z": 4.5
+        },
+        {
+          "x": 5.0,
+          "y": 7.0,
+          "z": 4.5
+        }
+      ],
+      "reversed": false,
+      "group": "trusses",
+      "color_order": "GRB",
+      "tags": [
+        "overhead",
+        "rear",
+        "stage"
+      ]
+    },
+    {
+      "type": "linear_strip",
+      "id": "truss_leg_rear_left",
+      "name": "Rear Left Truss Upright",
+      "pixel_count": 200,
+      "waypoints": [
+        {
+          "x": -5.0,
+          "y": 7.0,
+          "z": 4.5
+        },
+        {
+          "x": -5.0,
+          "y": 7.0,
+          "z": 0.0
+        }
+      ],
+      "reversed": false,
+      "group": "trusses",
+      "color_order": "GRB",
+      "tags": [
+        "rear",
+        "stage",
+        "upright"
+      ]
+    },
+    {
+      "type": "linear_strip",
+      "id": "truss_leg_rear_right",
+      "name": "Rear Right Truss Upright",
+      "pixel_count": 200,
+      "waypoints": [
+        {
+          "x": 5.0,
+          "y": 7.0,
+          "z": 4.5
+        },
+        {
+          "x": 5.0,
+          "y": 7.0,
+          "z": 0.0
+        }
+      ],
+      "reversed": false,
+      "group": "trusses",
+      "color_order": "GRB",
+      "tags": [
+        "rear",
+        "stage",
+        "upright"
+      ]
+    },
+    {
+      "type": "bulb_string",
+      "id": "bulb_canopy_left",
+      "name": "Canopy Festoon Left Diagonal",
+      "pixel_count": 36,
+      "start": {
+        "x": -6.0,
+        "y": 3.5,
+        "z": 3.8
+      },
+      "end": {
+        "x": 0.0,
+        "y": -4.0,
+        "z": 3.2
+      },
+      "sag": 0.6,
+      "sag_axis": "z",
+      "group": "festoon",
+      "color_order": "RGB",
+      "tags": [
+        "canopy",
+        "overhead",
+        "warm"
+      ]
+    },
+    {
+      "type": "bulb_string",
+      "id": "bulb_canopy_right",
+      "name": "Canopy Festoon Right Diagonal",
+      "pixel_count": 36,
+      "start": {
+        "x": 6.0,
+        "y": 3.5,
+        "z": 3.8
+      },
+      "end": {
+        "x": 0.0,
+        "y": -4.0,
+        "z": 3.2
+      },
+      "sag": 0.6,
+      "sag_axis": "z",
+      "group": "festoon",
+      "color_order": "RGB",
+      "tags": [
+        "canopy",
+        "overhead",
+        "warm"
+      ]
+    },
+    {
+      "type": "bulb_string",
+      "id": "bulb_canopy_cross",
+      "name": "Canopy Festoon Cross Transverse",
+      "pixel_count": 48,
+      "start": {
+        "x": -5.5,
+        "y": 0.0,
+        "z": 3.6
+      },
+      "end": {
+        "x": 5.5,
+        "y": 0.0,
+        "z": 3.6
+      },
+      "sag": 0.75,
+      "sag_axis": "z",
+      "group": "festoon",
+      "color_order": "RGB",
+      "tags": [
+        "canopy",
+        "overhead",
+        "warm"
+      ]
+    },
+    {
+      "type": "bulb_string",
+      "id": "bulb_lounge_swag",
+      "name": "Lounge Rear Swag Line",
+      "pixel_count": 40,
+      "start": {
+        "x": -4.0,
+        "y": -6.0,
+        "z": 3.0
+      },
+      "end": {
+        "x": 4.0,
+        "y": -6.0,
+        "z": 3.0
+      },
+      "sag": 0.5,
+      "sag_axis": "z",
+      "group": "festoon",
+      "color_order": "RGB",
+      "tags": [
+        "lounge",
+        "overhead",
+        "warm"
+      ]
+    },
+    {
+      "type": "matrix",
+      "id": "matrix_stage_left",
+      "name": "Stage Left Matrix Wall",
+      "rows": 16,
+      "cols": 16,
+      "origin": {
+        "x": -2.8,
+        "y": 6.8,
+        "z": 1.2
+      },
+      "width": 1.92,
+      "height": 1.92,
+      "serpentine": true,
+      "vertical": false,
+      "start_corner": "top_left",
+      "group": "panels",
+      "color_order": "GRB",
+      "tags": [
+        "left",
+        "matrix",
+        "stage"
+      ]
+    },
+    {
+      "type": "matrix",
+      "id": "matrix_stage_right",
+      "name": "Stage Right Matrix Wall",
+      "rows": 16,
+      "cols": 16,
+      "origin": {
+        "x": 0.9,
+        "y": 6.8,
+        "z": 1.2
+      },
+      "width": 1.92,
+      "height": 1.92,
+      "serpentine": true,
+      "vertical": false,
+      "start_corner": "top_left",
+      "group": "panels",
+      "color_order": "GRB",
+      "tags": [
+        "matrix",
+        "right",
+        "stage"
+      ]
+    },
+    {
+      "type": "matrix",
+      "id": "matrix_dj_facade",
+      "name": "DJ Booth Front Matrix",
+      "rows": 8,
+      "cols": 32,
+      "origin": {
+        "x": -1.6,
+        "y": 3.0,
+        "z": 0.2
+      },
+      "width": 3.2,
+      "height": 0.8,
+      "serpentine": true,
+      "vertical": false,
+      "start_corner": "top_left",
+      "group": "panels",
+      "color_order": "GRB",
+      "tags": [
+        "dj",
+        "facade",
+        "stage"
+      ]
+    },
+    {
+      "type": "point",
+      "id": "lamp_stage_fl_l",
+      "name": "Stage Front Left Lamp",
+      "location": {
+        "x": -4.5,
+        "y": 3.5,
+        "z": 0.0
+      },
+      "pixel_count": 1,
+      "radius": 0.45,
+      "group": "lamps",
+      "color_order": "GRB",
+      "tags": [
+        "accent",
+        "floor",
+        "stage"
+      ]
+    },
+    {
+      "type": "point",
+      "id": "lamp_stage_fl_r",
+      "name": "Stage Front Right Lamp",
+      "location": {
+        "x": 4.5,
+        "y": 3.5,
+        "z": 0.0
+      },
+      "pixel_count": 1,
+      "radius": 0.45,
+      "group": "lamps",
+      "color_order": "GRB",
+      "tags": [
+        "accent",
+        "floor",
+        "stage"
+      ]
+    },
+    {
+      "type": "point",
+      "id": "lamp_lounge_l",
+      "name": "Lounge Left Accent Lamp",
+      "location": {
+        "x": -3.5,
+        "y": -4.5,
+        "z": 0.0
+      },
+      "pixel_count": 1,
+      "radius": 0.5,
+      "group": "lamps",
+      "color_order": "GRB",
+      "tags": [
+        "accent",
+        "floor",
+        "lounge"
+      ]
+    },
+    {
+      "type": "point",
+      "id": "lamp_lounge_r",
+      "name": "Lounge Right Accent Lamp",
+      "location": {
+        "x": 3.5,
+        "y": -4.5,
+        "z": 0.0
+      },
+      "pixel_count": 1,
+      "radius": 0.5,
+      "group": "lamps",
+      "color_order": "GRB",
+      "tags": [
+        "accent",
+        "floor",
+        "lounge"
+      ]
+    },
+    {
+      "type": "projector",
+      "id": "projector_stage_canvas",
+      "name": "Main Stage Projector Viewport",
+      "top_left": {
+        "x": -2.4,
+        "y": 6.9,
+        "z": 3.8
+      },
+      "bottom_right": {
+        "x": 2.4,
+        "y": 6.9,
+        "z": 1.1
+      },
+      "resolution_x": 1920,
+      "resolution_y": 1080,
+      "group": "projectors",
+      "tags": [
+        "screen",
+        "stage",
+        "video"
+      ]
+    },
+    {
+      "type": "linear_strip",
+      "id": "strip_wall_left",
+      "name": "Auditorium Left Wall Baseboard",
+      "pixel_count": 450,
+      "waypoints": [
+        {
+          "x": -6.5,
+          "y": 4.0,
+          "z": 0.1
+        },
+        {
+          "x": -6.5,
+          "y": -6.5,
+          "z": 0.1
+        }
+      ],
+      "reversed": false,
+      "group": "perimeter",
+      "color_order": "GRB",
+      "tags": [
+        "baseboard",
+        "left",
+        "wall"
+      ]
+    },
+    {
+      "type": "linear_strip",
+      "id": "strip_wall_right",
+      "name": "Auditorium Right Wall Baseboard",
+      "pixel_count": 450,
+      "waypoints": [
+        {
+          "x": 6.5,
+          "y": 4.0,
+          "z": 0.1
+        },
+        {
+          "x": 6.5,
+          "y": -6.5,
+          "z": 0.1
+        }
+      ],
+      "reversed": false,
+      "group": "perimeter",
+      "color_order": "GRB",
+      "tags": [
+        "baseboard",
+        "right",
+        "wall"
+      ]
+    },
+    {
+      "type": "linear_strip",
+      "id": "strip_stage_lip",
+      "name": "Stage Front Lip Under-Glow",
+      "pixel_count": 240,
+      "waypoints": [
+        {
+          "x": -4.0,
+          "y": 2.8,
+          "z": 0.05
+        },
+        {
+          "x": 4.0,
+          "y": 2.8,
+          "z": 0.05
+        }
+      ],
+      "reversed": false,
+      "group": "stage",
+      "color_order": "GRB",
+      "tags": [
+        "edge",
+        "lip",
+        "stage"
+      ]
+    },
+    {
+      "type": "linear_strip",
+      "id": "strip_bar_counter",
+      "name": "Bar Counter Edge Glow",
+      "pixel_count": 180,
+      "waypoints": [
+        {
+          "x": -5.5,
+          "y": -5.0,
+          "z": 1.1
+        },
+        {
+          "x": -1.5,
+          "y": -5.0,
+          "z": 1.1
+        }
+      ],
+      "reversed": false,
+      "group": "bar",
+      "color_order": "GRB",
+      "tags": [
+        "bar",
+        "counter"
+      ]
+    },
+    {
+      "type": "linear_strip",
+      "id": "strip_bar_kickplate",
+      "name": "Bar Kickplate Under-Lighting",
+      "pixel_count": 180,
+      "waypoints": [
+        {
+          "x": -5.5,
+          "y": -5.0,
+          "z": 0.05
+        },
+        {
+          "x": -1.5,
+          "y": -5.0,
+          "z": 0.05
+        }
+      ],
+      "reversed": false,
+      "group": "bar",
+      "color_order": "GRB",
+      "tags": [
+        "bar",
+        "kickplate"
+      ]
+    },
+    {
+      "type": "linear_strip",
+      "id": "strip_bar_shelf",
+      "name": "Bar Liquor Display Shelf Backlight",
+      "pixel_count": 180,
+      "waypoints": [
+        {
+          "x": -5.5,
+          "y": -6.0,
+          "z": 1.8
+        },
+        {
+          "x": -1.5,
+          "y": -6.0,
+          "z": 1.8
+        }
+      ],
+      "reversed": false,
+      "group": "bar",
+      "color_order": "GRB",
+      "tags": [
+        "accent",
+        "bar",
+        "bottles"
+      ]
+    },
+    {
+      "type": "linear_strip",
+      "id": "strip_ceiling_cloud_1",
+      "name": "Ceiling Float Panel 1 Halo",
+      "pixel_count": 160,
+      "waypoints": [
+        {
+          "x": -4.0,
+          "y": 0.0,
+          "z": 3.4
+        },
+        {
+          "x": -2.0,
+          "y": 0.0,
+          "z": 3.4
+        },
+        {
+          "x": -2.0,
+          "y": 2.0,
+          "z": 3.4
+        },
+        {
+          "x": -4.0,
+          "y": 2.0,
+          "z": 3.4
+        },
+        {
+          "x": -4.0,
+          "y": 0.0,
+          "z": 3.4
+        }
+      ],
+      "reversed": false,
+      "group": "ceiling",
+      "color_order": "GRB",
+      "tags": [
+        "ceiling",
+        "halo",
+        "overhead"
+      ]
+    },
+    {
+      "type": "linear_strip",
+      "id": "strip_ceiling_cloud_2",
+      "name": "Ceiling Float Panel 2 Halo",
+      "pixel_count": 160,
+      "waypoints": [
+        {
+          "x": 2.0,
+          "y": 0.0,
+          "z": 3.4
+        },
+        {
+          "x": 4.0,
+          "y": 0.0,
+          "z": 3.4
+        },
+        {
+          "x": 4.0,
+          "y": 2.0,
+          "z": 3.4
+        },
+        {
+          "x": 2.0,
+          "y": 2.0,
+          "z": 3.4
+        },
+        {
+          "x": 2.0,
+          "y": 0.0,
+          "z": 3.4
+        }
+      ],
+      "reversed": false,
+      "group": "ceiling",
+      "color_order": "GRB",
+      "tags": [
+        "ceiling",
+        "halo",
+        "overhead"
+      ]
+    },
+    {
+      "type": "linear_strip",
+      "id": "strip_ceiling_cloud_3",
+      "name": "Ceiling Float Panel 3 Halo",
+      "pixel_count": 160,
+      "waypoints": [
+        {
+          "x": -3.5,
+          "y": -3.5,
+          "z": 3.4
+        },
+        {
+          "x": -1.5,
+          "y": -3.5,
+          "z": 3.4
+        },
+        {
+          "x": -1.5,
+          "y": -1.5,
+          "z": 3.4
+        },
+        {
+          "x": -3.5,
+          "y": -1.5,
+          "z": 3.4
+        },
+        {
+          "x": -3.5,
+          "y": -3.5,
+          "z": 3.4
+        }
+      ],
+      "reversed": false,
+      "group": "ceiling",
+      "color_order": "GRB",
+      "tags": [
+        "ceiling",
+        "halo",
+        "overhead"
+      ]
+    },
+    {
+      "type": "linear_strip",
+      "id": "strip_ceiling_cloud_4",
+      "name": "Ceiling Float Panel 4 Halo",
+      "pixel_count": 160,
+      "waypoints": [
+        {
+          "x": 1.5,
+          "y": -3.5,
+          "z": 3.4
+        },
+        {
+          "x": 3.5,
+          "y": -3.5,
+          "z": 3.4
+        },
+        {
+          "x": 3.5,
+          "y": -1.5,
+          "z": 3.4
+        },
+        {
+          "x": 1.5,
+          "y": -1.5,
+          "z": 3.4
+        },
+        {
+          "x": 1.5,
+          "y": -3.5,
+          "z": 3.4
+        }
+      ],
+      "reversed": false,
+      "group": "ceiling",
+      "color_order": "GRB",
+      "tags": [
+        "ceiling",
+        "halo",
+        "overhead"
+      ]
+    }
+  ]
+}
