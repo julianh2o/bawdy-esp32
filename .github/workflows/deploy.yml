@@ -1,0 +1,50 @@
+name: Deploy
+
+# On every push to main: run the tests, build and push both images to Docker Hub, then restart the
+# "lights" stack on ceto (compose file owned by fairgrounds-infra: templates/lights-compose.yml.j2).
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Run tests
+        run: PYTHONPATH=src:tests python -m unittest discover -s tests
+
+  daemon:
+    needs: test
+    uses: julianh2o/fairgrounds-infra/.github/workflows/docker-deploy.yml@main
+    with:
+      image: julianh2o/bawdy-lights-daemon
+      dockerfile: Dockerfile.daemon
+      host: 10.10.0.10 # ceto
+      stack_path: /opt/lights
+      deploy: false # the web job restarts the stack once both images are pushed
+    secrets: inherit
+
+  web:
+    needs: daemon
+    uses: julianh2o/fairgrounds-infra/.github/workflows/docker-deploy.yml@main
+    with:
+      image: julianh2o/bawdy-lights-web
+      dockerfile: Dockerfile.web
+      host: 10.10.0.10 # ceto
+      stack_path: /opt/lights
+    secrets: inherit

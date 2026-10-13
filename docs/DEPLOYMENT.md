@@ -115,7 +115,13 @@ On `docker stop`/`compose down` lightd receives SIGTERM, stops rendering, and se
 
 ## Building and publishing images
 
-`scripts/docker-build.sh` builds both images with the version, build date and git revision as OCI labels. It refuses to run with uncommitted changes.
+**Automatic:** every push to `main` (except Markdown-only changes) runs `.github/workflows/deploy.yml`. It runs the
+Python tests, builds and pushes both images to Docker Hub as `:latest` and `:sha-<commit>`, then restarts the `lights`
+stack on ceto (`/opt/lights`, compose file from fairgrounds-infra's `templates/lights-compose.yml.j2`). It uses
+fairgrounds-infra's shared `docker-deploy.yml` workflow and its secrets (`DOCKERHUB_*`, `TS_OAUTH_*`,
+`DEPLOY_SSH_KEY`). Run it by hand from the Actions tab with "Run workflow".
+
+**By hand:** `scripts/docker-build.sh` builds both images with the version, build date and git revision as OCI labels. It refuses to run with uncommitted changes.
 
 ```sh
 ./scripts/docker-build.sh                    # build both, load locally (linux/amd64)
@@ -135,4 +141,4 @@ lightd: `LIGHTD_HOST`, `LIGHTD_PORT`, `LIGHTD_FPS`, `LIGHTD_DRY_RUN`, `CONTROLLE
 
 ## Not covered
 
-The Java GUI is not containerized. Image builds are manual (`scripts/docker-build.sh`); CI publishing is not set up (see TODO.md #6).
+The Java GUI is not containerized. CI runs the Python tests before deploying, but not on pull requests, and doesn't run the Java tests (see TODO.md #6).
