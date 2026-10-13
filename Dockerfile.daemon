@@ -47,7 +47,7 @@ LABEL org.opencontainers.image.source="https://github.com/julianh2o/bawdy-esp32"
 
 # Settings are env vars (below) or CLI args appended to the command. The API binds all
 # interfaces and has no authentication (see TODO.md #7); set LIGHTD_HOST=127.0.0.1 to keep it local.
-# lightd writes to /config (controllers.json, patterns/, lightd-state.json): mount it read-write
+# lightd writes to /config (controllers.json, patterns/, scenes.json, lightd-state.json): mount it read-write
 # and make it writable by uid 10001.
 ENV APP_VERSION="${VERSION}" \
     LIGHTD_HOST=0.0.0.0 \
@@ -56,6 +56,7 @@ ENV APP_VERSION="${VERSION}" \
     CONTROLLERS_FILE=/config/controllers.json \
     USER_PATTERNS_DIR=/config/patterns \
     LIGHTD_STATE=/config/lightd-state.json \
+    SCENES_FILE=/config/scenes.json \
     BUILTIN_PATTERNS_DIR=/app/patterns
 
 USER wled

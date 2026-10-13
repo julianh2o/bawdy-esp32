@@ -24,7 +24,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--user-patterns", default=env("USER_PATTERNS_DIR", "config/patterns"),
                         help="where patterns saved through the API go")
     parser.add_argument("--state", default=env("LIGHTD_STATE", "config/lightd-state.json"),
-                        help="active runs are saved here and restored on start")
+                        help="active runs and channel brightness are saved here and restored on start")
+    parser.add_argument("--scenes", default=env("SCENES_FILE", "config/scenes.json"))
     parser.add_argument("--host", default=env("LIGHTD_HOST", "0.0.0.0"))
     parser.add_argument("--port", type=int, default=int(env("LIGHTD_PORT", "8765")))
     parser.add_argument("--fps", type=float, default=float(env("LIGHTD_FPS", "30")))
@@ -40,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
         from wled import FakeTransport
 
         transport = FakeTransport()
-    app = build(args.controllers, args.patterns, args.user_patterns, args.state, fps=args.fps,
+    app = build(args.controllers, args.patterns, args.user_patterns, args.state, args.scenes, fps=args.fps,
                 discovery=not args.no_discovery, transport=transport)
     try:
         controllers = app.registry.load()

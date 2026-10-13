@@ -45,12 +45,12 @@ Defaults chosen for the open items: port 8765, user patterns in `config/patterns
 | Pattern signature | `pixel(n, t, p)` returns `r, g, b`. There are no x/y coordinates |
 | `n` | 0-based pixel index within the target channel. Flipped for channels marked `reversed` |
 | Target length | Available to the pattern as the global `COUNT` |
-| `t` | Seconds since the run started |
+| `t` | Unix time in seconds, so every channel and run is in phase and patterns can tell the time |
 | Color output | Floats 0..1, clamped; converted to bytes by `lightd` |
 | Stateful effects | None. Patterns stay pure; deterministic `noise()`/`hash()` helpers stand in for randomness |
-| Params | Declared with a typed schema (type, default, min/max) |
+| Params | Declared with a typed schema (type, default, min/max). min/max only set the UI slider's range; typed values can go beyond it |
 | Live inputs (sound, MIDI…) | Not implemented. They'll arrive later as more keys in `p` |
-| Param changes | Applied live on the next frame; `t` keeps running |
+| Param changes | Applied live on the next frame. Since `t` is large, changing a rate param (speed, period) jumps the phase |
 | Pattern library | Built-ins in the repo's `patterns/`; user patterns saved through the API into a writable dir |
 | Ad-hoc Lua | Allowed: a run can carry its own source |
 | Pattern errors / overruns | Skip that frame and keep trying; report the error in status |
@@ -59,11 +59,12 @@ Defaults chosen for the open items: port 8765, user patterns in `config/patterns
 | Sub-channel ranges | Not yet. The smallest target is a whole channel |
 | Starting a run on a busy channel | The new run replaces the old one instantly (cut) |
 | Idle channels | Sent black |
-| Brightness / gamma | Left to WLED; `lightd` sends raw values |
+| Brightness / gamma | Per-channel brightness (0..1) in `lightd`, applied after rendering and kept across runs; gamma left to WLED |
 | RGBW outputs | Sent as RGB with W = 0 |
 | Channel layout | Read live from the board (`/json/cfg`). A board that can't be read gets no output |
 | Offline boards / IP changes | `lightd` runs mDNS discovery and follows boards by MAC/host |
-| Restart behaviour | Active runs are saved and restored on start |
+| Restart behaviour | Active runs and channel brightness are saved and restored on start |
+| Scenes | Named sets of `{targets, pattern, params, brightness?}` in `config/scenes.json`; activating one starts every entry and leaves other channels alone |
 | Frame rate | Configurable, default 30 |
 | Security | Trusted LAN, no auth; the Lua sandbox only guards against mistakes |
 | Discovery + `controllers.json` writes | Owned by `lightd`. The web server serves static files and proxies to `lightd` |
@@ -165,6 +166,11 @@ Channel lengths are not stored here; they come from the board.
 | POST | `/api/runs` | `{targets: [...], pattern: name \| source: lua, params}` → run id |
 | PATCH | `/api/runs/{id}` | update params live |
 | DELETE | `/api/runs/{id}` | stop a run; its channels go black |
+| GET | `/api/brightness` | channels whose brightness isn't 1: `{"wled_01/2": 0.5}` |
+| PUT | `/api/brightness` | `{targets: [...], brightness: 0..1}` |
+| GET | `/api/scenes` | scenes with their entries and whether each is active |
+| GET/PUT/DELETE | `/api/scenes/{name}` | read / save (`{entries: [...]}`) / delete a scene |
+| POST | `/api/scenes/{name}/activate` | start every entry; returns the runs and any entries that failed |
 | POST | `/api/blackout` | stop all runs |
 
 ### Layout
@@ -208,7 +214,7 @@ end
 - **Contract**: `pixel(n, t, p)` returns `r, g, b` floats in 0..1.
   - `n` runs `0..COUNT-1` along the channel and is flipped when the channel is `reversed`.
   - `COUNT` is a global set per target.
-  - `t` is seconds since the run started.
+  - `t` is Unix time in seconds (wall clock), the same for every channel and run.
   - `p` holds the params. Defaults are filled in from the schema, and `color` params arrive as `{r, g, b}` in 0..1.
 - **Param types**: `number` (default/min/max/step), `color` (hex default), `boolean`, `choice` (options). Extend as
   needed.

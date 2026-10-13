@@ -12,6 +12,7 @@ from lightd.loop import DEFAULT_FPS, RenderLoop
 from lightd.patterns import PatternLibrary
 from lightd.registry import Registry
 from lightd.runs import RunManager
+from lightd.scenes import SceneStore
 
 
 def build(
@@ -19,6 +20,7 @@ def build(
     builtin_patterns: Path | str | None = None,
     user_patterns: Path | str | None = None,
     state: Path | str | None = None,
+    scenes: Path | str | None = None,
     fps: float = DEFAULT_FPS,
     discovery: bool = True,
     transport: Any = None,
@@ -29,7 +31,7 @@ def build(
     registry = Registry(store, transport=transport, browser=browser)
     library = PatternLibrary(builtin_patterns, user_patterns)
     runs = RunManager(library, state)
-    return Lightd(store, registry, library, runs, RenderLoop(registry, runs, fps=fps))
+    return Lightd(store, registry, library, runs, RenderLoop(registry, runs, fps=fps), SceneStore(scenes, library))
 
 
 __all__ = ["ApiServer", "Lightd", "build"]

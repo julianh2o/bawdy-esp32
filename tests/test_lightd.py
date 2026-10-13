@@ -1,4 +1,4 @@
-"""Tests for lightd: config, targets, Lua runtime, library, runs, render loop and REST API."""
+"""Tests for lightd: config, targets, Lua runtime, library, runs, brightness, scenes, render loop and REST API."""
 
 import json
 import os
@@ -18,6 +18,7 @@ from lightd.lua import Pattern, PatternError
 from lightd.patterns import LibraryError, PatternLibrary
 from lightd.registry import Registry
 from lightd.runs import RunManager
+from lightd.scenes import SceneError, SceneStore, is_active
 from lightd.targets import Target, TargetError, parse_targets
 from test_wled import FakeHttp, payloads
 
@@ -106,9 +107,13 @@ class TestLua(unittest.TestCase):
         self.assertEqual(p.schema["speed"], {"type": "number", "default": 2, "min": 0, "max": 5})
         self.assertEqual(p.schema["c"]["type"], "color")
         p.set_params({"speed": 99, "level": 0.5})
-        self.assertEqual(p.params()["speed"], 5)
+        self.assertEqual(p.params()["speed"], 99)  # min/max are slider hints, not limits
         self.assertEqual(p.params()["level"], 0.5)  # unknown keys pass through (future live inputs)
         self.assertEqual(p.params()["c"], {"r": 1.0, "g": 0.0, "b": 0.0})
+        p.set_params({"speed": "1.5"})
+        self.assertEqual(p.params()["speed"], 1.5)
+        p.set_params({"speed": "fast"})
+        self.assertEqual(p.params()["speed"], 2)  # not a number: default
 
     def test_errors_and_sandbox(self):
         with self.assertRaises(PatternError) as cm:
@@ -134,7 +139,7 @@ class TestLua(unittest.TestCase):
 
     def test_builtin_patterns_compile_and_render(self):
         lib = PatternLibrary(REPO / "patterns", None)
-        names = [n for n, _ in lib.names()]
+        names = lib.names()
         self.assertIn("rainbow", names)
         for name in names:
             data = Pattern(lib.source(name)).render(50, 1.5)
@@ -152,16 +157,25 @@ class TestLibrary(unittest.TestCase):
     def test_save_list_delete(self):
         self.lib.save("mine", RED)
         items = {p["name"]: p for p in self.lib.list()}
-        self.assertFalse(items["mine"]["builtin"])
-        self.assertTrue(items["rainbow"]["builtin"])
+        self.assertEqual((items["mine"]["builtin"], items["mine"]["modified"]), (False, False))
+        self.assertEqual((items["rainbow"]["builtin"], items["rainbow"]["modified"]), (True, False))
         self.assertEqual(self.lib.get("mine")["source"], RED)
         self.lib.delete("mine")
         with self.assertRaises(LibraryError):
             self.lib.get("mine")
 
-    def test_rejects(self):
+    def test_edit_and_revert_builtin(self):
+        original = self.lib.source("rainbow")
+        self.assertEqual(self.lib.save("rainbow", RED), {"name": "rainbow", "builtin": True, "modified": True})
+        self.assertEqual(self.lib.get("rainbow")["source"], RED)  # the edited copy is used
+        self.assertTrue({p["name"]: p for p in self.lib.list()}["rainbow"]["modified"])
+        self.assertEqual((REPO / "patterns" / "rainbow.lua").read_text(), original)  # built-in untouched
+        self.lib.delete("rainbow")  # revert
+        self.assertEqual(self.lib.get("rainbow"), {"name": "rainbow", "builtin": True, "modified": False, "source": original})
         with self.assertRaises(LibraryError):
-            self.lib.save("rainbow", RED)  # built-in name
+            self.lib.delete("rainbow")  # nothing left to revert
+
+    def test_rejects(self):
         with self.assertRaises(LibraryError):
             self.lib.save("Bad Name", RED)
         with self.assertRaises(PatternError):
@@ -215,6 +229,19 @@ class TestRuns(RunsTest):
         (r,) = restored.runs()
         self.assertEqual((r.name, [str(t) for t in r.targets], r.values), ("solid", ["a/1"], run.values))
 
+    def test_brightness_per_channel_persists(self):
+        self.runs.set_brightness(["a/1", "a/2"], 0.25)
+        self.runs.set_brightness("a/2", 1)  # back to full: no longer stored
+        self.assertEqual(self.runs.brightness_levels(), {"a/1": 0.25})
+        self.assertEqual(self.runs.brightness(Target("a", 2)), 1.0)
+        for bad in (1.5, -0.1, "0.5", True, None):
+            with self.assertRaises(ValueError):
+                self.runs.set_brightness(["a/1"], bad)
+
+        restored = RunManager(self.lib, self.dir / "state.json")
+        self.assertEqual(restored.restore(), [])
+        self.assertEqual(restored.brightness(Target("a", 0)), 0.25)
+
     def test_bad_requests(self):
         with self.assertRaises(ValueError):
             self.runs.start(["a/1"])
@@ -235,11 +262,59 @@ class TestLoop(RunsTest):
         self.assertEqual(ch2[-3], 0)  # last LED shows n = 0
         self.assertEqual(frame[540 * 3:], bytes(270 * 3))
 
-    def test_error_keeps_last_good_frame_and_reports(self):
-        run = self.runs.start(["a/1"], source="function pixel(n, t, p) if t > 5 then error('late') end return 1, 0, 0 end")
-        self.loop.step(now=run.started)
+    def test_t_is_unix_time_shared_by_every_run(self):
+        src = "function pixel(n, t, p) return (t % 100) / 100, t > 1e9 and 1 or 0, 0 end"
+        self.runs.start(["a/1"], source=src)
+        time.sleep(0.05)
+        self.runs.start(["a/3"], source=src)  # started later, same t
+        self.loop.step(now=1_700_000_042.0)
+        frame = payloads(self.tx.sent)
+        self.assertEqual(frame[:3], bytes([107, 255, 0]))  # 0.42 * 255
+        self.assertEqual(frame[540 * 3:540 * 3 + 3], frame[:3])
         self.tx.clear()
-        self.loop.step(now=run.started + 10)
+        self.loop.step()  # defaults to the current time
+        self.assertEqual(payloads(self.tx.sent)[1], 255)
+
+    def test_brightness_scales_output(self):
+        self.runs.start(["a/1", "a/2"], source=RED)
+        self.runs.set_brightness(["a/1"], 0.5)
+        self.loop.step()
+        frame = payloads(self.tx.sent)
+        self.assertEqual(frame[:3], b"\x80\x00\x00")
+        self.assertEqual(frame[270 * 3:270 * 3 + 3], b"\xff\x00\x00")  # a/2 untouched
+        self.runs.set_brightness(["a/1"], 0)
+        self.tx.clear()
+        self.loop.step()
+        self.assertEqual(payloads(self.tx.sent)[:270 * 3], bytes(270 * 3))
+
+    def test_output_off_sends_nothing_and_releases_boards(self):
+        self.runs.start(["a/1"], source=RED)
+        self.runs.set_output(False)
+        self.loop.step()
+        self.loop.step()
+        self.assertEqual(self.tx.sent, [])
+        board = self.registry.get("a").controller
+        for _ in range(50):  # released in a background thread
+            if board.http.posted:
+                break
+            time.sleep(0.01)
+        self.assertEqual(board.http.posted, [{"live": False}])  # once, not every frame
+
+        restored = RunManager(self.lib, self.dir / "state.json")
+        restored.restore()
+        self.assertFalse(restored.output)
+        with self.assertRaises(ValueError):
+            self.runs.set_output("off")
+
+        self.runs.set_output(True)
+        self.loop.step()
+        self.assertEqual(payloads(self.tx.sent)[:3], b"\xff\x00\x00")
+
+    def test_error_keeps_last_good_frame_and_reports(self):
+        run = self.runs.start(["a/1"], source="function pixel(n, t, p) if t > 1005 then error('late') end return 1, 0, 0 end")
+        self.loop.step(now=1000.0)
+        self.tx.clear()
+        self.loop.step(now=1010.0)
         self.assertEqual(payloads(self.tx.sent)[:3], b"\xff\x00\x00")
         self.assertIn("late", run.error["message"])
         self.assertEqual(run.error_count, 1)
@@ -250,6 +325,64 @@ class TestLoop(RunsTest):
         RenderLoop(reg, self.runs).step()
         self.assertEqual(tx.sent, [])
         self.assertFalse(reg.get("b").online)
+
+
+class TestScenes(RunsTest):
+    def setUp(self):
+        super().setUp()
+        self.scenes = SceneStore(self.dir / "scenes.json", self.lib)
+
+    def test_save_validates(self):
+        ok = {"targets": ["a/1"], "pattern": "solid"}
+        for entries, msg in [
+            ([], "non-empty"),
+            ([{"targets": ["a/1"], "pattern": "nope"}], "no pattern named"),
+            ([ok, {"targets": ["a/2", "a/1"], "pattern": "fire"}], "entries 1 and 2"),
+            ([{**ok, "brightness": 2}], "brightness"),
+            ([{**ok, "params": [1]}], "params"),
+            ([{"targets": ["a"], "pattern": "solid"}], "Entry 1"),
+        ]:
+            with self.assertRaisesRegex(SceneError, msg):
+                self.scenes.save("party", entries)
+        with self.assertRaises(SceneError):
+            self.scenes.save("Bad Name", [ok])
+        saved = self.scenes.save("party", [ok])
+        self.assertEqual(saved["entries"], [{"targets": ["a/1"], "pattern": "solid", "params": {}}])
+        self.assertEqual(SceneStore(self.dir / "scenes.json", self.lib).get("party"), saved)  # on disk
+        self.scenes.delete("party")
+        with self.assertRaises(SceneError):
+            self.scenes.get("party")
+
+    def test_activate_starts_runs_and_tracks_active(self):
+        other = self.runs.start(["a/1", "a/3"], source=RED)
+        entries = [
+            {"targets": ["a/1", "a/2"], "pattern": "rainbow", "params": {"speed": 1}},
+            {"targets": ["a/3"], "pattern": "solid", "params": {"color": "#00ff00"}, "brightness": 0.3},
+        ]
+        self.scenes.save("party", entries)
+        started, errors = self.scenes.activate("party", self.runs)
+        self.assertEqual(errors, [])
+        self.assertEqual([(r.name, r.scene, [str(t) for t in r.targets]) for r in started],
+                         [("rainbow", "party", ["a/1", "a/2"]), ("solid", "party", ["a/3"])])
+        self.assertNotIn(other.id, {r.id for r in self.runs.runs()})  # cut off every target
+        self.assertEqual(self.runs.brightness(Target("a", 2)), 0.3)
+        self.assertTrue(is_active("party", entries, self.runs.assignments()))
+
+        restored = RunManager(self.lib, self.dir / "state.json")
+        restored.restore()
+        self.assertTrue(is_active("party", entries, restored.assignments()))
+
+        self.runs.start(["a/2"], pattern="fire")
+        self.assertFalse(is_active("party", entries, self.runs.assignments()))
+
+    def test_activate_skips_entries_that_fail(self):
+        (self.dir / "user").mkdir()
+        self.lib.save("mine", RED)
+        self.scenes.save("s", [{"targets": ["a/1"], "pattern": "mine"}, {"targets": ["a/2"], "pattern": "solid"}])
+        self.lib.delete("mine")
+        started, errors = self.scenes.activate("s", self.runs)
+        self.assertEqual([r.name for r in started], ["solid"])
+        self.assertIn("mine on a/1", errors[0])
 
 
 class TestApi(RunsTest):
@@ -307,7 +440,9 @@ class TestApi(RunsTest):
         self.assertEqual(status, 200, res)
         names = [p["name"] for p in self.call("GET", "/api/patterns")[1]["patterns"]]
         self.assertIn("mine", names)
-        self.assertEqual(self.call("PUT", "/api/patterns/rainbow", {"source": RED})[0], 409)
+        self.assertEqual(self.call("PUT", "/api/patterns/rainbow", {"source": RED})[1]["modified"], True)
+        self.assertEqual(self.call("DELETE", "/api/patterns/rainbow")[0], 200)
+        self.assertEqual(self.call("DELETE", "/api/patterns/rainbow")[0], 409)
         status, text = self.call("GET", "/api/runtime.lua")
         self.assertIn("function M.render_hex", text)
 
@@ -356,6 +491,38 @@ class TestApi(RunsTest):
         self.assertEqual(status, 200)
         self.assertIn("not valid JSON", res["error"])
         self.assertEqual(self.call("POST", "/api/config/reload")[0], 400)
+
+    def test_brightness(self):
+        status, res = self.call("PUT", "/api/brightness", {"targets": ["a/2"], "brightness": 0.4})
+        self.assertEqual((status, res["brightness"]), (200, {"a/2": 0.4}))
+        self.assertEqual(self.call("GET", "/api/brightness")[1]["brightness"], {"a/2": 0.4})
+        channels = self.call("GET", "/api/controllers")[1]["controllers"][0]["channels"]
+        self.assertEqual([ch["brightness"] for ch in channels], [1.0, 0.4, 1.0])
+        self.assertEqual(self.call("PUT", "/api/brightness", {"targets": ["a/2"], "brightness": 3})[0], 400)
+        self.assertEqual(self.call("PUT", "/api/brightness", {"brightness": 0.5})[0], 400)
+
+    def test_output_switch(self):
+        self.assertEqual(self.call("GET", "/api/output")[1], {"enabled": True})
+        self.assertEqual(self.call("PUT", "/api/output", {"enabled": False})[1], {"enabled": False})
+        self.assertFalse(self.call("GET", "/api/status")[1]["output"])
+        self.assertEqual(self.call("PUT", "/api/output", {})[0], 400)
+
+    def test_scenes(self):
+        entries = [{"targets": ["a/1"], "pattern": "chase", "params": {"width": 3}, "brightness": 0.5}]
+        status, res = self.call("PUT", "/api/scenes/party", {"entries": entries})
+        self.assertEqual(status, 200, res)
+        self.assertEqual(self.call("PUT", "/api/scenes/bad", {"entries": [{"targets": ["a/1"], "pattern": "x"}]})[0], 400)
+        (scene,) = self.call("GET", "/api/scenes")[1]["scenes"]
+        self.assertEqual((scene["name"], scene["active"]), ("party", False))
+
+        status, res = self.call("POST", "/api/scenes/party/activate")
+        self.assertEqual((status, res["status"], res["runs"][0]["scene"]), (200, "ok", "party"))
+        self.assertTrue(self.call("GET", "/api/scenes/party")[1]["active"])
+        self.assertEqual(self.call("GET", "/api/brightness")[1]["brightness"], {"a/1": 0.5})
+
+        self.assertEqual(self.call("POST", "/api/scenes/nope/activate")[0], 404)
+        self.assertEqual(self.call("DELETE", "/api/scenes/party")[0], 200)
+        self.assertEqual(self.call("GET", "/api/scenes/party")[0], 404)
 
     def test_discovery_disabled(self):
         status, res = self.call("GET", "/api/discovered")

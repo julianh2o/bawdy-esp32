@@ -3,7 +3,7 @@
 --
 -- A pattern is Lua source that defines:
 --   params = { speed = { type = "number", default = 1, min = 0, max = 5 }, ... }   -- optional
---   function pixel(n, t, p) return r, g, b end   -- n: 0..COUNT-1, t: seconds, r/g/b: 0..1
+--   function pixel(n, t, p) return r, g, b end   -- n: 0..COUNT-1, t: Unix time in seconds, r/g/b: 0..1
 
 local M = {}
 
@@ -123,6 +123,7 @@ local function infer_type(default)
 end
 
 -- Normalized params schema: { name = {type, default, min, max, step, options, label} }.
+-- min/max set the UI slider's range; they don't limit the value, which can be typed in beyond them.
 function M.schema(env)
   local out = {}
   if type(env.params) ~= "table" then return out end
@@ -142,10 +143,7 @@ end
 
 local function coerce(s, v)
   if s.type == "number" then
-    v = tonumber(v) or tonumber(s.default) or 0
-    if s.min and v < s.min then v = s.min end
-    if s.max and v > s.max then v = s.max end
-    return v
+    return tonumber(v) or tonumber(s.default) or 0
   elseif s.type == "boolean" then
     return v == true or v == "true" or v == 1
   elseif s.type == "color" then

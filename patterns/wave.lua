@@ -1,8 +1,8 @@
 -- Sine wave of brightness traveling along the strip.
 params = {
   color = { type = "color", default = "#3060ff" },
-  wavelength = { type = "number", default = 40, min = 2, max = 1000, label = "Pixels per wave" },
-  speed = { type = "number", default = 30, min = -600, max = 600, label = "Pixels per second" },
+  wavelength = { type = "number", default = 40, min = 4, max = 200, step = 1, label = "Pixels per wave" },
+  speed = { type = "number", default = 30, min = -100, max = 100, label = "Pixels per second" },
 }
 
 function pixel(n, t, p)

@@ -1,20 +1,26 @@
 /**
- * Pattern editor (/patterns): edit Lua patterns, preview them in the browser, run them on channels.
+ * Pattern editor (/patterns): edit Lua patterns, preview them in the browser, run them on channels with params and
+ * brightness, save what's running as a scene and activate scenes.
  *
  * Talks to lightd through the web server's /engine/* proxy. The preview runs lightd's own
  * runtime.lua in wasmoon (Lua 5.4 in WASM), so it renders exactly what the LEDs will show.
  */
 
 import { LuaFactory } from "https://cdn.jsdelivr.net/npm/wasmoon@1.16.0/+esm";
+import { initOutputSwitch, showOutput } from "./output_switch.js";
 
 const API = "/engine/api";
 const WASM_URL = "https://cdn.jsdelivr.net/npm/wasmoon@1.16.0/dist/glue.wasm";
 const POLL_MS = 2000;
 const PREVIEW_FPS = 30;
 const STORE_KEY = "lightd.patterns";
+// Floppy-disk "save" icon, drawn in the button's text color.
+const SAVE_ICON = `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor"
+  stroke-width="1.4" stroke-linejoin="round"><path d="M2.5 2.5h9l2 2v9h-11z"/><path d="M5 2.5v3.5h5.5V2.5"/>
+  <rect x="4.5" y="9" width="7" height="4.5"/></svg>`;
 
 const TEMPLATE = `-- pixel(n, t, p) runs for every pixel, every frame.
---   n: pixel number, 0 .. COUNT - 1      t: seconds since the run started
+--   n: pixel number, 0 .. COUNT - 1      t: Unix time in seconds (the same on every channel)
 --   p: params (declared below)           return r, g, b in 0 .. 1
 -- Helpers: hsv(h, s, v), mix(a, b, k), clamp(x, lo, hi), noise(x, y), hash(n, seed), color("#rrggbb")
 
@@ -31,12 +37,17 @@ end
 
 const S = {
   library: [],
-  current: { name: "", builtin: false, saved: null }, // saved: source as stored in the library (null = unsaved)
+  // builtin: a built-in of this name exists; modified: an edited copy replaces it. saved: source as stored (null = unsaved)
+  current: { name: "", builtin: false, modified: false, saved: null },
   controllers: [],
   runs: [],
   selected: new Set(),
+  scenes: [],
   online: false,
-  preview: { compile: null, render: null, ok: false, playing: true, t0: performance.now(), pausedAt: 0, last: 0, error: null },
+  schema: {}, // params declared by the editor's code (last version that compiled)
+  params: {}, // values set in the Params panel; unset params use the schema default
+  brightness: 1, // applied to the selected channels on Run
+  preview: { compile: null, render: null, clearParams: null, setParam: null, schema: null, ok: false, playing: true, pausedAt: 0, last: 0, error: null },
 };
 let editor = null;
 let errorMark = null;
@@ -61,6 +72,11 @@ function el(tag, attrs = {}, ...children) {
 }
 
 const $ = (id) => document.getElementById(id);
+
+function icon(node, svg) {
+  node.innerHTML = svg;
+  return node;
+}
 
 async function api(method, path, body) {
   const resp = await fetch(API + path, {
@@ -125,11 +141,42 @@ async function initPreview() {
   await lua.doString(`
     RT = assert(load(RUNTIME_SRC, "=runtime"))()
     local env, p
+    local values = {}
     function preview_compile(src)
       local e, err = RT.compile(src)
       if not e then env = nil; return tostring(err) end
-      env, p = e, RT.params(e, nil)
+      env, p = e, RT.params(e, values)
       return ""
+    end
+    -- Param values: cleared, then set one by one. (wasmoon can't take null arguments.)
+    function preview_clear_params()
+      values = {}
+      if env then p = RT.params(env, values) end
+    end
+    function preview_param(k, v)
+      values[k] = v
+      if env then p = RT.params(env, values) end
+    end
+    local function json(v)
+      local ty = type(v)
+      if ty == "table" then
+        local out = {}
+        if #v > 0 then
+          for i, x in ipairs(v) do out[i] = json(x) end
+          return "[" .. table.concat(out, ",") .. "]"
+        end
+        for k, x in pairs(v) do out[#out + 1] = json(tostring(k)) .. ":" .. json(x) end
+        return "{" .. table.concat(out, ",") .. "}"
+      elseif ty == "string" then
+        return '"' .. v:gsub('[%c"\\\\]', function(c) return string.format("\\\\u%04x", c:byte()) end) .. '"'
+      elseif ty == "number" or ty == "boolean" then
+        return tostring(v)
+      end
+      return "null"
+    end
+    function preview_schema()
+      if not env then return "" end
+      return json(RT.schema(env))
     end
     function preview_render(count, t, reversed)
       if not env then return "" end
@@ -140,6 +187,9 @@ async function initPreview() {
   `);
   S.preview.compile = lua.global.get("preview_compile");
   S.preview.render = lua.global.get("preview_render");
+  S.preview.clearParams = lua.global.get("preview_clear_params");
+  S.preview.setParam = lua.global.get("preview_param");
+  S.preview.schema = lua.global.get("preview_schema");
 }
 
 function compilePreview() {
@@ -148,11 +198,23 @@ function compilePreview() {
   S.preview.ok = !err;
   S.preview.error = err || null;
   showError(err || null);
+  if (!err) {
+    try { S.schema = JSON.parse(S.preview.schema() || "{}"); } catch { /* keep the last schema */ }
+    pushPreviewParams();
+    renderParams();
+  }
   updateButtons();
 }
 
-function previewTime(now = performance.now()) {
-  return ((S.preview.playing ? now : S.preview.pausedAt) - S.preview.t0) / 1000;
+function pushPreviewParams() {
+  if (!S.preview.setParam) return;
+  S.preview.clearParams();
+  for (const [k, v] of Object.entries(S.params)) if (v !== null && v !== undefined) S.preview.setParam(k, v);
+}
+
+// Wall-clock time, like lightd, so the preview is in step with the LEDs.
+function previewTime() {
+  return S.preview.playing ? Date.now() / 1000 : S.preview.pausedAt;
 }
 
 function drawPreview(now) {
@@ -170,7 +232,7 @@ function drawPreview(now) {
   if (!S.preview.render || !S.preview.ok) return;
 
   const count = Math.max(1, Math.min(2000, parseInt($("preview-count").value, 10) || 150));
-  const t = previewTime(now);
+  const t = previewTime();
   const t0 = performance.now();
   const data = S.preview.render(count, t, $("preview-reversed").checked);
   const ms = performance.now() - t0;
@@ -187,7 +249,7 @@ function drawPreview(now) {
     ctx.fillStyle = `#${data.substr(i * 6, 6)}`;
     ctx.fillRect(i * cell + gap / 2, (h - height) / 2, Math.max(1, cell - gap), height);
   }
-  $("preview-time").textContent = `t = ${t.toFixed(1)} s`;
+  $("preview-time").textContent = `t = ${t.toFixed(1)} (${new Date(t * 1000).toLocaleTimeString()})`;
   $("preview-perf").textContent = `${count} px · ${ms.toFixed(1)} ms/frame`;
 }
 
@@ -211,7 +273,9 @@ function renderLibrary() {
       class: `pe-item${p.name === S.current.name && S.current.saved !== null ? " current" : ""}`,
       onclick: () => openPattern(p.name),
       title: p.error ? p.error.message : "",
-    }, p.name, p.error ? el("span", { class: "tag err" }, "error") : null);
+    }, p.name,
+    p.modified ? el("span", { class: "tag", title: "Your edited copy is used instead of the built-in" }, "edited") : null,
+    p.error ? el("span", { class: "tag err" }, "error") : null);
   $("library-list").replaceChildren(
     el("div", { class: "pe-group" }, "Mine"),
     ...(mine.length ? mine.map(item) : [el("div", { class: "muted small" }, "Nothing saved yet.")]),
@@ -224,18 +288,22 @@ function confirmDiscard() {
   return !isDirty() || confirm("Discard unsaved changes?");
 }
 
-async function openPattern(name, { force = false } = {}) {
-  if (!force && !confirmDiscard()) return;
+async function openPattern(name, { force = false, params = {} } = {}) {
+  if (!force && !confirmDiscard()) return false;
   try {
     const p = await api("GET", `/patterns/${encodeURIComponent(name)}`);
-    setCurrent(p.name, p.builtin, p.source);
+    setCurrent(p, params);
+    return true;
   } catch (e) {
     banner(`Could not open ${name}: ${e.message}`, "err");
+    return false;
   }
 }
 
-function setCurrent(name, builtin, src) {
-  S.current = { name, builtin, saved: src };
+function setCurrent({ name, builtin, modified, source: src }, params = {}) {
+  S.current = { name, builtin, modified, saved: src };
+  S.params = { ...params };
+  S.schema = S.library.find((p) => p.name === name)?.params || S.schema; // until the preview compiles it
   $("name-input").value = name;
   editor.setValue(src);
   editor.clearHistory();
@@ -247,7 +315,8 @@ function setCurrent(name, builtin, src) {
 
 function newPattern() {
   if (!confirmDiscard()) return;
-  S.current = { name: "", builtin: false, saved: null };
+  S.current = { name: "", builtin: false, modified: false, saved: null };
+  S.params = {};
   $("name-input").value = "";
   editor.setValue(TEMPLATE);
   restartPreview();
@@ -259,11 +328,13 @@ function newPattern() {
 async function savePattern() {
   const name = $("name-input").value.trim();
   if (!name) { banner("Give the pattern a name first.", "err"); $("name-input").focus(); return; }
+  // Saving over a built-in stores an edited copy; ask first unless that built-in is the one open.
   const builtin = S.library.find((p) => p.name === name && p.builtin);
-  if (builtin) { banner(`'${name}' is a built-in pattern. Save your version under another name.`, "err"); $("name-input").focus(); return; }
+  if (builtin && name !== S.current.name &&
+      !confirm(`Replace the built-in pattern '${name}' with this code? Revert brings the original back.`)) return;
   try {
-    await api("PUT", `/patterns/${encodeURIComponent(name)}`, { source: source() });
-    S.current = { name, builtin: false, saved: source() };
+    const res = await api("PUT", `/patterns/${encodeURIComponent(name)}`, { source: source() });
+    S.current = { name, builtin: res.builtin, modified: res.modified, saved: source() };
     banner(`Saved ${name}.`, "ok");
     setTimeout(() => banner(null), 2500);
     await loadLibrary();
@@ -275,30 +346,44 @@ async function savePattern() {
   }
 }
 
+// Delete a user pattern, or revert an edited built-in to the original.
 async function deletePattern() {
-  const { name, builtin, saved } = S.current;
-  if (!name || builtin || saved === null) return;
-  if (!confirm(`Delete ${name}? Runs already playing it keep going.`)) return;
+  const { name, builtin, modified, saved } = S.current;
+  if (!name || saved === null || (builtin && !modified)) return;
+  const question = modified
+    ? `Revert ${name} to the built-in version? Your edits are lost; runs already playing them keep going.`
+    : `Delete ${name}? Runs already playing it keep going.`;
+  if (!confirm(question)) return;
   try {
     await api("DELETE", `/patterns/${encodeURIComponent(name)}`);
-    S.current = { name: "", builtin: false, saved: null };
-    $("name-input").value = "";
     await loadLibrary();
-    updateButtons();
+    if (modified) {
+      await openPattern(name, { force: true, params: S.params });
+    } else {
+      S.current = { name: "", builtin: false, modified: false, saved: null };
+      $("name-input").value = "";
+      updateButtons();
+    }
   } catch (e) {
     banner(`Could not delete: ${e.message}`, "err");
   }
 }
 
 function updateButtons() {
-  const { name, builtin, saved } = S.current;
+  const { name, builtin, modified, saved } = S.current;
   const typed = $("name-input").value.trim();
-  $("source-tag").textContent = builtin && typed === name ? "built-in" : saved === null ? "new" : "";
+  $("source-tag").textContent = saved === null ? "new"
+    : typed !== name ? "" : modified ? "edited built-in" : builtin ? "built-in" : "";
   $("dirty-indicator").textContent = isDirty() ? "Unsaved changes" : "";
-  $("save-btn").textContent = builtin && typed === name ? "Save as…" : "Save";
-  $("delete-btn").hidden = builtin || saved === null;
+  $("delete-btn").hidden = saved === null || (builtin && !modified);
+  $("delete-btn").textContent = modified ? "Revert" : "Delete";
+  $("delete-btn").title = modified ? "Go back to the original built-in version" : "";
   $("run-btn").disabled = !S.selected.size || !S.preview.ok && S.preview.compile !== null || !S.online;
   $("run-btn").textContent = S.selected.size > 1 ? `Run on ${S.selected.size} channels` : "Run on selected";
+  $("run-hint").textContent = isDirty() || S.current.saved === null
+    ? "Unsaved code runs as-is, but only saved patterns can go in a scene." : "";
+  $("save-scene-btn").disabled = !S.runs.some((r) => r.pattern) || !S.online;
+  $("stop-all-btn").disabled = !S.runs.length || !S.online;
 }
 
 // ---------- controllers & runs ----------
@@ -356,13 +441,15 @@ function renderTargets() {
               }),
               el("span", {}, ch.name || `Ch ${ch.number}`),
               run ? el("span", { class: "busy", title: "Playing now" }, `▶ ${run.pattern || "editor"}`) : null,
-              el("span", { class: "meta" }, usable ? `${ch.length} px${ch.reversed ? " · rev" : ""}` : "not on board"));
+              el("span", { class: "meta" }, usable
+                ? `${ch.length} px${ch.reversed ? " · rev" : ""}${ch.brightness < 1 ? ` · ${Math.round(ch.brightness * 100)}%` : ""}`
+                : "not on board"));
           })
         : el("div", { class: "muted small" }, c.online ? "No LED outputs reported." : "Channels appear once the board is reachable."))));
   updateButtons();
 }
 
-function matchPreviewToSelection() {
+function matchPreviewToSelection({ brightness = true } = {}) {
   const first = [...S.selected][0];
   if (!first) return;
   for (const c of S.controllers) {
@@ -370,8 +457,96 @@ function matchPreviewToSelection() {
     if (ch?.length) {
       $("preview-count").value = ch.length;
       $("preview-reversed").checked = !!ch.reversed;
+      if (brightness) { S.brightness = ch.brightness ?? 1; renderParams(); }
     }
   }
+}
+
+// ---------- params panel ----------
+
+function renderParams() {
+  const names = Object.keys(S.schema).sort();
+  const rows = names.flatMap((name) => {
+    const spec = S.schema[name];
+    const isSet = Object.hasOwn(S.params, name);
+    const value = isSet ? S.params[name] : spec.default;
+    const label = el("span", { class: `pe-param-name${isSet ? " set" : ""}`, title: name }, spec.label || name);
+    const reset = el("button", {
+      class: `btn btn-small btn-ghost pe-reset${isSet ? " set" : ""}`,
+      title: `Back to the default (${spec.default})`,
+      "aria-label": `Reset ${spec.label || name}`,
+      onclick: () => { delete S.params[name]; pushPreviewParams(); renderParams(); },
+    }, "↺");
+    const set = (v) => {
+      S.params[name] = v;
+      label.classList.add("set");
+      reset.classList.add("set");
+      pushPreviewParams();
+    };
+    return [label, paramInput(spec, value, set, spec.label || name), reset];
+  });
+  const pct = Math.round(S.brightness * 100);
+  const num = el("span", { class: "num" }, `${pct}%`);
+  rows.push(
+    el("span", { class: "pe-param-name", title: "Applied to the selected channels" }, "Brightness"),
+    el("span", { class: "pe-value" },
+      el("input", {
+        type: "range", min: 0, max: 100, value: pct, "aria-label": "Brightness",
+        oninput: (e) => { S.brightness = e.target.value / 100; num.textContent = `${e.target.value}%`; },
+      }),
+      num),
+    el("span"));
+  if (!names.length) rows.unshift(el("span", { class: "muted small pe-noparams" }, "This pattern has no params."));
+  $("params-form").replaceChildren(...rows);
+}
+
+function paramInput(spec, value, set, label) {
+  if (spec.type === "number") {
+    if (spec.min !== undefined && spec.max !== undefined) {
+      // The slider covers min..max; the box takes any number, beyond the slider's range too.
+      const outside = (v) => v < spec.min || v > spec.max;
+      const slider = el("input", {
+        type: "range", min: spec.min, max: spec.max, step: spec.step ?? "any", value, "aria-label": label,
+        oninput: (e) => { box.value = fmt(Number(e.target.value)); box.classList.remove("out"); set(Number(e.target.value)); },
+      });
+      const box = el("input", {
+        type: "number", class: `num-box${outside(value) ? " out" : ""}`, value: fmt(value), step: "any",
+        "aria-label": `${label} (any number)`, title: `Slider range ${spec.min} to ${spec.max}; type any number`,
+        oninput: (e) => {
+          const v = Number(e.target.value);
+          if (e.target.value === "" || !Number.isFinite(v)) return;
+          slider.value = v;
+          box.classList.toggle("out", outside(v));
+          set(v);
+        },
+      });
+      return el("span", { class: "pe-value" }, slider, box);
+    }
+    return el("input", { type: "number", value, step: spec.step ?? "any", "aria-label": label, oninput: (e) => set(Number(e.target.value)) });
+  }
+  if (spec.type === "color") {
+    return el("span", { class: "pe-value" },
+      el("input", { type: "color", value: value || "#000000", "aria-label": label, oninput: (e) => set(e.target.value) }));
+  }
+  if (spec.type === "boolean") {
+    return el("span", { class: "pe-value" },
+      el("input", { type: "checkbox", checked: !!value, "aria-label": label, onchange: (e) => set(e.target.checked) }));
+  }
+  if (spec.type === "choice" && Array.isArray(spec.options)) {
+    return el("select", { "aria-label": label, onchange: (e) => set(e.target.value) },
+      spec.options.map((o) => el("option", { value: o, selected: o === value }, o)));
+  }
+  return el("input", { type: "text", value: value ?? "", "aria-label": label, oninput: (e) => set(e.target.value) });
+}
+
+function fmt(v) {
+  return Number.isInteger(v) ? String(v) : Number(v).toFixed(2).replace(/\.?0+$/, "");
+}
+
+function resetParams() {
+  S.params = {};
+  pushPreviewParams();
+  renderParams();
 }
 
 async function loadRuns() {
@@ -395,7 +570,10 @@ function renderRuns() {
         el("strong", {}, r.pattern || "editor code"),
         r.error ? el("span", { class: "tag err" }, "error") : null,
         el("span", { class: "spacer" }),
-        el("span", { class: "muted small" }, `${Math.floor(r.elapsed)} s`),
+        r.pattern ? el("button", {
+          class: "btn btn-small btn-ghost", title: "Load this run's pattern, channels and params into the editor",
+          onclick: () => editRun(r),
+        }, "Edit") : null,
         el("button", { class: "btn btn-small", onclick: () => stopRun(r.id) }, "Stop")),
       el("div", { class: "targets" }, r.targets.map(targetLabel).join(", ")),
       r.error ? el("div", { class: "err" }, r.error.message) : null)));
@@ -409,14 +587,24 @@ function targetLabel(target) {
   return target;
 }
 
+async function editRun(r) {
+  if (!(await openPattern(r.pattern, { params: r.params }))) return;
+  S.selected = new Set(r.targets);
+  matchPreviewToSelection();
+  savePrefs();
+  renderTargets();
+}
+
 async function runSelected() {
   const targets = [...S.selected];
   const { name, saved } = S.current;
-  const body = { targets, params: {} };
+  const body = { targets, params: S.params };
   if (name && saved !== null && !isDirty()) body.pattern = name;
   else body.source = source();
   try {
     await api("POST", "/runs", body);
+    await api("PUT", "/brightness", { targets, brightness: S.brightness });
+    await loadControllers();
     banner(null);
     showError(null);
     await loadRuns();
@@ -437,11 +625,127 @@ async function stopRun(id) {
   renderTargets();
 }
 
-async function blackout() {
+// ---------- scenes ----------
+
+async function loadScenes() {
+  try {
+    S.scenes = (await api("GET", "/scenes")).scenes;
+  } catch {
+    S.scenes = [];
+  }
+  renderScenes();
+}
+
+function renderScenes() {
+  const items = S.scenes.map((sc) =>
+    el("div", { class: "pe-scene" },
+      el("button", {
+        class: `pe-item${sc.active ? " current" : ""}`,
+        title: `Activate: ${sc.entries.map((e) => `${e.pattern} on ${e.targets.map(targetLabel).join(", ")}`).join("; ")}`,
+        onclick: () => activateScene(sc.name),
+      }, el("span", { class: "pe-play" }, "▶"), sc.name, sc.active ? el("span", { class: "tag ok" }, "active") : null),
+      icon(el("button", {
+        class: "btn btn-small btn-ghost pe-scene-btn", title: `Overwrite ${sc.name} with what's playing now`,
+        "aria-label": `Overwrite ${sc.name} with what's playing now`,
+        onclick: () => overwriteScene(sc.name),
+      }), SAVE_ICON),
+      el("button", {
+        class: "btn btn-small btn-ghost btn-danger pe-scene-btn", title: `Delete ${sc.name}`, "aria-label": `Delete ${sc.name}`,
+        onclick: () => deleteScene(sc.name),
+      }, "×")));
+  $("scene-list").replaceChildren(...(items.length ? items
+    : [el("div", { class: "muted small" }, "None yet. Run patterns, then “Save as scene” under Running.")]));
+}
+
+async function activateScene(name) {
+  try {
+    const res = await api("POST", `/scenes/${encodeURIComponent(name)}/activate`);
+    if (res.errors.length) banner(`${name} started, except: ${res.errors.join("; ")}`, "err");
+    else banner(null);
+  } catch (e) {
+    banner(`${name} didn't start: ${e.message}`, "err");
+  }
+  await Promise.all([loadRuns(), loadControllers(), loadScenes()]);
+  renderTargets();
+}
+
+async function deleteScene(name) {
+  if (!confirm(`Delete scene ${name}? Whatever it started keeps playing.`)) return;
+  try {
+    await api("DELETE", `/scenes/${encodeURIComponent(name)}`);
+  } catch (e) {
+    banner(`Could not delete: ${e.message}`, "err");
+  }
+  await loadScenes();
+}
+
+// What's playing now as scene entries: one per run and brightness level (editor code can't go in a scene).
+// Returns null (after explaining why) when nothing from the library is playing.
+async function runningAsEntries() {
+  await Promise.all([loadRuns(), loadControllers()]);
+  const usable = S.runs.filter((r) => r.pattern);
+  if (!usable.length) { banner("Nothing from the library is playing. Save the pattern, then run it.", "err"); return null; }
+  const level = (t) => {
+    for (const c of S.controllers) {
+      const ch = c.channels.find((x) => x.target === t);
+      if (ch) return ch.brightness ?? 1;
+    }
+    return 1;
+  };
+  const entries = [];
+  for (const r of usable) {
+    const groups = new Map();
+    for (const t of r.targets) groups.set(level(t), [...(groups.get(level(t)) || []), t]);
+    for (const [brightness, targets] of groups) entries.push({ targets, pattern: r.pattern, params: r.params, brightness });
+  }
+  return { entries, skipped: S.runs.length - usable.length };
+}
+
+function describeEntries(entries) {
+  return entries.map((e) => `• ${e.pattern} on ${e.targets.map(targetLabel).join(", ")}` +
+    (e.brightness < 1 ? ` at ${Math.round(e.brightness * 100)}%` : "")).join("\n");
+}
+
+async function storeScene(name, { entries, skipped }) {
+  try {
+    await api("PUT", `/scenes/${encodeURIComponent(name)}`, { entries });
+  } catch (e) {
+    banner(`Scene not saved: ${e.message}`, "err");
+    return;
+  }
+  banner(skipped ? `Saved ${name}, without ${skipped} run${skipped > 1 ? "s" : ""} of unsaved editor code.` : `Saved ${name}.`,
+    skipped ? "err" : "ok");
+  if (!skipped) setTimeout(() => banner(null), 2500);
+  await loadScenes();
+}
+
+async function saveAsScene() {
+  const running = await runningAsEntries();
+  if (!running) return;
+  const active = S.scenes.find((sc) => sc.active);
+  const name = (prompt("Scene name (lowercase letters, digits, - and _):", active?.name || "") || "").trim();
+  if (!name) return;
+  if (S.scenes.some((sc) => sc.name === name) &&
+      !confirm(`Overwrite scene ${name} with what's playing now?\n\n${describeEntries(running.entries)}`)) return;
+  await storeScene(name, running);
+}
+
+// The scene list's overwrite button: replace a scene with what's playing now, after confirming.
+async function overwriteScene(name) {
+  const running = await runningAsEntries();
+  if (!running) return;
+  const was = S.scenes.find((sc) => sc.name === name);
+  const question = `Overwrite scene ${name} with what's playing now?\n\nNew:\n${describeEntries(running.entries)}` +
+    (was ? `\n\nReplaces:\n${describeEntries(was.entries)}` : "");
+  if (!confirm(question)) return;
+  await storeScene(name, running);
+}
+
+async function stopAll() {
   try {
     await api("POST", "/blackout");
   } catch (e) {
-    banner(`Blackout failed: ${e.message}`, "err");
+    banner(`Could not stop: ${e.message}`, "err");
   }
   await loadRuns();
   renderTargets();
@@ -454,6 +758,7 @@ async function pollStatus() {
     S.online = true;
     pill.className = "pill ok";
     pill.textContent = `lightd · ${Math.round(s.actual_fps)} fps · ${s.controllers.online}/${s.controllers.total} online`;
+    showOutput(s.output);
   } catch {
     S.online = false;
     pill.className = "pill err";
@@ -463,24 +768,21 @@ async function pollStatus() {
 
 async function poll() {
   await pollStatus();
-  await loadControllers();
-  await loadRuns();
+  await Promise.all([loadControllers(), loadRuns(), loadScenes()]);
   renderTargets();
+  updateButtons();
 }
 
 // ---------- preview controls ----------
 
 function restartPreview() {
-  S.preview.t0 = performance.now();
-  S.preview.pausedAt = S.preview.t0;
   compilePreview();
 }
 
+// Pausing freezes t; playing again jumps back to the current time.
 function togglePlay() {
   const p = S.preview;
-  const now = performance.now();
-  if (p.playing) p.pausedAt = now;
-  else p.t0 += now - p.pausedAt;
+  if (p.playing) p.pausedAt = Date.now() / 1000;
   p.playing = !p.playing;
   $("preview-play").textContent = p.playing ? "Pause" : "Play";
 }
@@ -515,10 +817,12 @@ async function bootstrap() {
   $("delete-btn").addEventListener("click", deletePattern);
   $("name-input").addEventListener("input", updateButtons);
   $("run-btn").addEventListener("click", runSelected);
-  $("blackout-btn").addEventListener("click", blackout);
+  $("stop-all-btn").addEventListener("click", stopAll);
+  initOutputSwitch(api, (msg) => banner(msg, "err"));
   $("refresh-btn").addEventListener("click", poll);
   $("preview-play").addEventListener("click", togglePlay);
-  $("preview-restart").addEventListener("click", restartPreview);
+  $("save-scene-btn").addEventListener("click", saveAsScene);
+  $("params-reset").addEventListener("click", resetParams);
   window.addEventListener("beforeunload", (e) => { if (isDirty()) e.preventDefault(); });
 
   const prefs = loadPrefs();
@@ -536,6 +840,7 @@ async function bootstrap() {
   if (start) await openPattern(start, { force: true });
   else compilePreview();
   matchPreviewToSelection();
+  renderParams();
   setInterval(poll, POLL_MS);
 }
 

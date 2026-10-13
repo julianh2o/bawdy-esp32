@@ -1,4 +1,8 @@
-"""Pattern library: built-in ``.lua`` files (read-only) plus user patterns saved through the API."""
+"""Pattern library: built-in ``.lua`` files (read-only) plus user patterns saved through the API.
+
+Saving under a built-in's name stores an edited copy in the user directory, which is used instead of the built-in.
+Deleting that copy reverts to the built-in; the built-in files themselves are never changed.
+"""
 
 from __future__ import annotations
 import re
@@ -30,21 +34,27 @@ class PatternLibrary:
                 return base / f"{name}.lua", builtin
         return None
 
-    def names(self) -> list[tuple[str, bool]]:
-        seen: dict[str, bool] = {}
-        for base, builtin in ((self.builtin_dir, True), (self.user_dir, False)):
+    def _is_builtin(self, name: str) -> bool:
+        return self.builtin_dir is not None and (self.builtin_dir / f"{name}.lua").is_file()
+
+    def _info(self, name: str, path: Path, user: bool) -> dict[str, Any]:
+        """``builtin``: a built-in of this name exists. ``modified``: an edited copy is used instead of it."""
+        builtin = self._is_builtin(name)
+        return {"name": name, "builtin": builtin, "modified": builtin and user}
+
+    def names(self) -> list[str]:
+        seen: set[str] = set()
+        for base in (self.builtin_dir, self.user_dir):
             if base is not None and base.is_dir():
-                for p in base.glob("*.lua"):
-                    if NAME_RE.match(p.stem):
-                        seen.setdefault(p.stem, builtin)
-        return sorted(seen.items())
+                seen.update(p.stem for p in base.glob("*.lua") if NAME_RE.match(p.stem))
+        return sorted(seen)
 
     def get(self, name: str) -> dict[str, Any]:
         found = self._path(name)
         if found is None:
             raise LibraryError(f"No pattern named '{name}'", 404)
-        path, builtin = found
-        return {"name": name, "builtin": builtin, "source": path.read_text(encoding="utf-8")}
+        path, builtin_file = found
+        return {**self._info(name, path, not builtin_file), "source": path.read_text(encoding="utf-8")}
 
     def source(self, name: str) -> str:
         return self.get(name)["source"]
@@ -52,35 +62,37 @@ class PatternLibrary:
     def list(self) -> list[dict[str, Any]]:
         """Every pattern with its params schema (or its compile error)."""
         out = []
-        for name, builtin in self.names():
-            item: dict[str, Any] = {"name": name, "builtin": builtin}
+        for name in self.names():
+            found = self._path(name)
+            if found is None:
+                continue
+            item = self._info(name, found[0], not found[1])
             try:
-                item["params"] = Pattern(self.source(name)).schema
+                item["params"] = Pattern(found[0].read_text(encoding="utf-8")).schema
             except PatternError as e:
                 item["error"] = e.to_dict()
             out.append(item)
         return out
 
     def save(self, name: str, source: str) -> dict[str, Any]:
-        """Save a user pattern after checking it compiles. Built-in names can't be overwritten."""
+        """Save a user pattern after checking it compiles. A built-in's name saves an edited copy of it."""
         if self.user_dir is None:
             raise LibraryError("No user pattern directory configured", 409)
         if not NAME_RE.match(name):
             raise LibraryError("Pattern names use lowercase letters, digits, '-' and '_' (max 64)")
-        if self.builtin_dir is not None and (self.builtin_dir / f"{name}.lua").is_file():
-            raise LibraryError(f"'{name}' is a built-in pattern; save under another name", 409)
         if len(source.encode("utf-8")) > MAX_SOURCE_BYTES:
             raise LibraryError("Pattern source is too large")
         Pattern(source)  # raises PatternError
         self.user_dir.mkdir(parents=True, exist_ok=True)
         (self.user_dir / f"{name}.lua").write_text(source, encoding="utf-8")
-        return {"name": name, "builtin": False}
+        return self._info(name, self.user_dir / f"{name}.lua", True)
 
     def delete(self, name: str) -> None:
+        """Delete a user pattern, or an edited built-in's copy (reverting to the built-in)."""
         found = self._path(name)
         if found is None:
             raise LibraryError(f"No pattern named '{name}'", 404)
-        path, builtin = found
-        if builtin:
-            raise LibraryError(f"'{name}' is a built-in pattern", 409)
+        path, builtin_file = found
+        if builtin_file:
+            raise LibraryError(f"'{name}' is a built-in pattern and hasn't been edited", 409)
         path.unlink()

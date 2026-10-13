@@ -2,8 +2,8 @@
 params = {
   color = { type = "color", default = "#ffe0a0" },
   density = { type = "number", default = 0.15, min = 0, max = 1, step = 0.01, label = "Share of pixels lit" },
-  rate = { type = "number", default = 1, min = 0.05, max = 10, step = 0.05, label = "Twinkles per second" },
-  background = { type = "number", default = 0.02, min = 0, max = 1, step = 0.01 },
+  rate = { type = "number", default = 1, min = 0.05, max = 3, step = 0.05, label = "Twinkles per second" },
+  background = { type = "number", default = 0.02, min = 0, max = 0.3, step = 0.01 },
 }
 
 function pixel(n, t, p)

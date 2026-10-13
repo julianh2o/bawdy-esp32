@@ -19,7 +19,9 @@
       <span id="lightd-status" class="pill">lightd…</span>
     </div>
     <div class="topbar-actions">
-      <button id="blackout-btn" class="btn btn-danger" title="Stop every run; all channels go black">Blackout</button>
+      <label class="switch" title="Off: lightd sends nothing and the boards show their own WLED effects">
+        <input type="checkbox" id="output-toggle" role="switch" checked> <span>Output</span>
+      </label>
     </div>
   </header>
 
@@ -28,6 +30,11 @@
   <main class="pe-layout">
     <aside class="pe-library" aria-labelledby="library-heading">
       <div class="column-head">
+        <h2 id="scenes-heading">Scenes</h2>
+      </div>
+      <div id="scene-list" class="pe-list" aria-labelledby="scenes-heading"></div>
+
+      <div class="column-head pe-library-head">
         <h2 id="library-heading">Library</h2>
         <button id="new-btn" class="btn btn-small" title="Start a new pattern">+ New</button>
       </div>
@@ -55,7 +62,6 @@
           <label class="small muted">Pixels <input type="number" id="preview-count" min="1" max="2000" value="150"></label>
           <label class="small muted check"><input type="checkbox" id="preview-reversed"> Reversed</label>
           <button id="preview-play" class="btn btn-small">Pause</button>
-          <button id="preview-restart" class="btn btn-small btn-ghost" title="Restart at t = 0">↺</button>
         </div>
         <canvas id="preview-canvas" height="44"></canvas>
         <div class="row small muted"><span id="preview-time">t = 0.0 s</span><span class="spacer"></span><span id="preview-perf"></span></div>
@@ -68,12 +74,25 @@
         <button id="refresh-btn" class="btn btn-small btn-ghost" title="Reload controllers">↻</button>
       </div>
       <div id="targets-list" class="stack"></div>
+
+      <div class="column-head pe-params-head">
+        <h2 id="params-heading">Params</h2>
+        <button id="params-reset" class="btn btn-small btn-ghost" title="Every param back to its default">Reset</button>
+      </div>
+      <div id="params-form" class="pe-params" aria-labelledby="params-heading"></div>
+
       <div class="row pe-run-row">
         <button id="run-btn" class="btn btn-primary" disabled>Run on selected</button>
       </div>
       <p id="run-hint" class="muted small"></p>
 
-      <div class="column-head pe-runs-head"><h2>Running</h2></div>
+      <div class="column-head pe-runs-head">
+        <h2>Running</h2>
+        <span class="row">
+          <button id="save-scene-btn" class="btn btn-small" title="Save everything playing now (patterns, params, brightness) as a scene">Save as scene…</button>
+          <button id="stop-all-btn" class="btn btn-small btn-ghost btn-danger" title="Stop everything; all channels go black" aria-label="Stop all runs">×</button>
+        </span>
+      </div>
       <div id="runs-list" class="stack"></div>
     </aside>
   </main>

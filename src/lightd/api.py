@@ -15,6 +15,7 @@ from lightd.lua import RUNTIME_PATH, PatternError, Pattern
 from lightd.patterns import LibraryError, PatternLibrary
 from lightd.registry import Registry
 from lightd.runs import RunManager
+from lightd.scenes import SceneError, SceneStore, is_active
 from lightd.targets import Target, TargetError
 
 log = logging.getLogger(__name__)
@@ -32,12 +33,16 @@ class ApiError(Exception):
 class Lightd:
     """Everything the API needs, wired together."""
 
-    def __init__(self, store: ControllerStore, registry: Registry, library: PatternLibrary, runs: RunManager, loop: Any) -> None:
+    def __init__(
+        self, store: ControllerStore, registry: Registry, library: PatternLibrary, runs: RunManager, loop: Any,
+        scenes: SceneStore | None = None,
+    ) -> None:
         self.store = store
         self.registry = registry
         self.library = library
         self.runs = runs
         self.loop = loop
+        self.scenes = scenes if scenes is not None else SceneStore(None, library)
 
     @property
     def browser(self) -> Any:
@@ -61,6 +66,7 @@ def _route(app: Lightd, method: str, path: str, body: dict[str, Any]) -> tuple[i
             "last_frame_ms": round(app.loop.last_frame_ms, 2),
             "controllers": {"total": len(entries), "online": sum(1 for e in entries if e.online)},
             "runs": len(runs),
+            "output": app.runs.output,
             "errors": [{"run": r.id, **r.error} for r in runs if r.error],
         }
 
@@ -68,8 +74,27 @@ def _route(app: Lightd, method: str, path: str, body: dict[str, Any]) -> tuple[i
         return 200, RUNTIME_PATH.read_text(encoding="utf-8")
 
     if head == "controllers" and len(parts) == 1 and method == "GET":
-        # Live state: board info, channels as the board reports them, online, current IP.
-        return 200, {"controllers": [e.to_dict() for e in app.registry.entries()]}
+        # Live state: board info, channels as the board reports them (plus brightness), online, current IP.
+        controllers = [e.to_dict() for e in app.registry.entries()]
+        for c in controllers:
+            for ch in c["channels"]:
+                ch["brightness"] = app.runs.brightness(Target(c["id"], ch["index"]))
+        return 200, {"controllers": controllers}
+
+    if head == "output" and len(parts) == 1:
+        # Master switch: off = send nothing, so the boards show their own WLED effects.
+        if method in ("PUT", "POST"):
+            app.runs.set_output(body.get("enabled"))
+        if method in ("GET", "PUT", "POST"):
+            return 200, {"enabled": app.runs.output}
+
+    if head == "brightness" and len(parts) == 1:
+        # Per-channel output level, 0..1. Channels not listed are at 1.
+        if method == "GET":
+            return 200, {"brightness": app.runs.brightness_levels()}
+        if method in ("PUT", "POST"):
+            app.runs.set_brightness(body.get("targets"), body.get("brightness"))
+            return 200, {"status": "ok", "brightness": app.runs.brightness_levels()}
 
     if head == "config":
         # controllers.json itself: read, replace (validated, saved, applied at once), or re-read from disk.
@@ -140,6 +165,29 @@ def _route(app: Lightd, method: str, path: str, body: dict[str, Any]) -> tuple[i
                     return 200, {"status": "ok"}
             except KeyError:
                 raise ApiError(404, f"No run '{parts[1]}'")
+
+    if head == "scenes":
+        if len(parts) == 1 and method == "GET":
+            assignments = app.runs.assignments()
+            return 200, {"scenes": [{**s, "active": is_active(s["name"], s["entries"], assignments)}
+                                    for s in app.scenes.list()]}
+        if len(parts) >= 2:
+            name = parts[1]
+            if len(parts) == 2:
+                if method == "GET":
+                    scene = app.scenes.get(name)
+                    return 200, {**scene, "active": is_active(name, scene["entries"], app.runs.assignments())}
+                if method == "PUT":
+                    return 200, app.scenes.save(name, body.get("entries"))
+                if method == "DELETE":
+                    app.scenes.delete(name)
+                    return 200, {"status": "ok"}
+            if parts[2:] == ["activate"] and method == "POST":
+                started, errors = app.scenes.activate(name, app.runs)
+                if errors and not started:
+                    raise ApiError(400, "; ".join(errors), errors=errors)
+                return 200, {"status": "error" if errors else "ok", "runs": [r.to_dict() for r in started],
+                             "errors": errors}
 
     if head == "blackout" and method == "POST":
         app.runs.stop_all()
@@ -239,7 +287,7 @@ class _Handler(BaseHTTPRequestHandler):
             status, payload = e.status, {"status": "error", "message": str(e), **e.extra}
         except PatternError as e:
             status, payload = 400, {"status": "error", **e.to_dict()}
-        except LibraryError as e:
+        except (LibraryError, SceneError) as e:
             status, payload = e.status, {"status": "error", "message": str(e)}
         except (ConfigError, TargetError, WledError, ValueError, TypeError) as e:
             status, payload = 400, {"status": "error", "message": str(e)}

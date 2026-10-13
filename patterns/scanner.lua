@@ -1,8 +1,8 @@
 -- Larson scanner: an eye that sweeps back and forth.
 params = {
   color = { type = "color", default = "#ff0000" },
-  period = { type = "number", default = 2, min = 0.1, max = 30, label = "Seconds per round trip" },
-  width = { type = "number", default = 8, min = 1, max = 100 },
+  period = { type = "number", default = 2, min = 0.3, max = 10, step = 0.1, label = "Seconds per round trip" },
+  width = { type = "number", default = 8, min = 1, max = 40, step = 1 },
 }
 
 function pixel(n, t, p)

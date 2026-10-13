@@ -160,7 +160,7 @@ class SequencerHandler(BaseHTTPRequestHandler):
         if path == "" or path == "/":
             target = static_dir / "index.html"
         elif path in ("/config", "/patterns"):
-            # Controller setup and the pattern editor; both talk to lightd through /engine/*.
+            # Controller setup and the pattern editor (with scenes); both talk to lightd through /engine/*.
             target = static_dir / f"{path.lstrip('/')}.html"
         else:
             rel = path.lstrip("/")

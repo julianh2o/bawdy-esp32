@@ -1,7 +1,7 @@
 -- Whole strip fades in and out.
 params = {
   color = { type = "color", default = "#ff2060" },
-  period = { type = "number", default = 4, min = 0.2, max = 60, label = "Seconds per breath" },
+  period = { type = "number", default = 4, min = 0.5, max = 15, step = 0.1, label = "Seconds per breath" },
   floor = { type = "number", default = 0.05, min = 0, max = 1, step = 0.01, label = "Dimmest level" },
 }
 

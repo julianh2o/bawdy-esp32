@@ -2,7 +2,7 @@
 params = {
   from = { type = "color", default = "#ff3c00" },
   to = { type = "color", default = "#7800ff" },
-  speed = { type = "number", default = 0.1, min = -5, max = 5, step = 0.05 },
+  speed = { type = "number", default = 0.1, min = -1, max = 1, step = 0.01 },
 }
 
 function pixel(n, t, p)

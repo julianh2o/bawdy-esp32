@@ -1,8 +1,14 @@
-"""The render loop: at a fixed rate, render every run on its channels and send each board one frame."""
+"""The render loop: at a fixed rate, render every run on its channels and send each board one frame.
+
+Patterns get ``t`` = Unix time in seconds, so every channel and every run is in phase by definition, and a
+pattern can tell the time of day. Each channel's output is then scaled by its brightness.
+"""
 
 from __future__ import annotations
+import functools
 import threading
 import time
+from typing import Any
 
 from wled import WledError
 
@@ -12,6 +18,20 @@ from lightd.runs import RunManager
 from lightd.targets import Target
 
 DEFAULT_FPS = 30.0
+
+
+@functools.lru_cache(maxsize=64)
+def _scale_table(level: float) -> bytes:
+    return bytes(round(v * level) for v in range(256))
+
+
+def scale(data: bytes, level: float) -> bytes:
+    """Every byte multiplied by ``level`` (0..1)."""
+    if level >= 1.0:
+        return data
+    if level <= 0.0:
+        return bytes(len(data))
+    return data.translate(_scale_table(level))
 
 
 class RenderLoop:
@@ -24,10 +44,21 @@ class RenderLoop:
         self.last_frame_ms = 0.0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._sending = True
 
     def step(self, now: float | None = None) -> None:
-        """Render and send one frame to every board whose channels are known. Idle channels are black."""
-        now = time.monotonic() if now is None else now
+        """Render and send one frame to every board whose channels are known. Idle channels are black.
+
+        ``now`` is the Unix time patterns see as ``t`` (default: the current time). With output off, nothing is sent;
+        on the frame output goes off, every board is told to leave realtime mode so it shows its own effects at once.
+        """
+        if not self.runs.output:
+            if self._sending:
+                self._sending = False
+                self._release_all()
+            return
+        self._sending = True
+        now = time.time() if now is None else now
         assignments = self.runs.assignments()
         for run in set(assignments.values()):
             run.apply_pending()
@@ -43,19 +74,30 @@ class RenderLoop:
                 if run is None:
                     continue
                 try:
-                    data = run.pattern.render(ch.length, run.elapsed(now), entry.reversed(ch.index))
+                    data = run.pattern.render(ch.length, now, entry.reversed(ch.index))
                     run.last_frames[target] = data
                     run.error = None
                 except PatternError as e:
                     run.record_error(e)
                     data = run.last_frames.get(target)  # keep showing the last good frame
                 if data:
-                    buffers[ch.index] = data
+                    buffers[ch.index] = scale(data, self.runs.brightness(target))
             try:
                 controller.send_channels(buffers)
             except WledError:
                 pass
         self.frames += 1
+
+    def _release_all(self) -> None:
+        def release(controller: Any) -> None:
+            try:
+                controller.release()
+            except WledError:
+                pass
+
+        for entry in self.registry.entries():
+            if entry.online:
+                threading.Thread(target=release, args=(entry.controller,), daemon=True, name=f"Release-{entry.id}").start()
 
     def _run(self) -> None:
         period = 1.0 / self.fps
@@ -63,7 +105,7 @@ class RenderLoop:
         window_start, window_frames = next_tick, 0
         while not self._stop.is_set():
             t0 = time.monotonic()
-            self.step(t0)
+            self.step()
             self.last_frame_ms = (time.monotonic() - t0) * 1000
             window_frames += 1
             if t0 - window_start >= 1.0:
@@ -88,7 +130,7 @@ class RenderLoop:
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             self._thread = None
-        if blackout:
+        if blackout and self.runs.output:
             for entry in self.registry.entries():
                 if entry.controller.channels is not None:
                     entry.controller.blackout()
