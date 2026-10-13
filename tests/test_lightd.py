@@ -1,6 +1,7 @@
 """Tests for lightd: config, targets, Lua runtime, library, runs, brightness, scenes, render loop and REST API."""
 
 import json
+import logging
 import os
 import tempfile
 import time
@@ -476,6 +477,34 @@ class TestApi(RunsTest):
         self.assertEqual(status, 200, res)
         self.assertIsNotNone(board.channels)
         self.assertEqual([ch["length"] for ch in res["controllers"][0]["channels"]], [270, 270, 270])
+
+    def test_logs(self):
+        from lightd.logs import LogBuffer
+        buf = LogBuffer(capacity=3)
+        self.server.httpd.app.logs = buf
+        logger = logging.getLogger("lightd.test")
+        logger.addHandler(buf)
+        try:
+            logger.warning("w1")
+            logger.error("e1")
+            try:
+                raise RuntimeError("boom")
+            except RuntimeError:
+                logger.exception("crashed")
+            logger.warning("w2")  # capacity 3: w1 drops out
+        finally:
+            logger.removeHandler(buf)
+        status, res = self.call("GET", "/api/logs")
+        self.assertEqual(status, 200)
+        self.assertEqual([r["message"] for r in res["logs"]], ["e1", "crashed", "w2"])
+        self.assertIn("RuntimeError: boom", res["logs"][1]["exception"])
+        self.assertEqual(res["last_seq"], 4)
+        res = self.call("GET", "/api/logs?level=error&since=2")[1]
+        self.assertEqual([r["message"] for r in res["logs"]], ["crashed"])
+        self.assertEqual([r["message"] for r in self.call("GET", "/api/logs?limit=1")[1]["logs"]], ["w2"])
+        status, text = self.call("GET", "/api/logs?format=text&level=warning")
+        self.assertRegex(text, r"ERROR +lightd.test: e1\n")
+        self.assertEqual(self.call("GET", "/api/logs?level=loud")[0], 400)
 
     def test_run_lifecycle(self):
         status, run = self.call("POST", "/api/runs", {"targets": ["a/1"], "pattern": "chase", "params": {"width": 3}})

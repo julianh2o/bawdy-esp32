@@ -1,6 +1,7 @@
 """Configured controllers: a WledController per id, kept fresh and following boards across IP changes."""
 
 from __future__ import annotations
+import logging
 import threading
 import time
 from typing import Any, Callable
@@ -10,8 +11,15 @@ from wled.models import channel_warnings
 
 from lightd.config import ControllerStore
 
+log = logging.getLogger(__name__)
+
 REFRESH_INTERVAL = 30.0  # re-read a healthy board's info/channels this often
 RETRY_INTERVAL = 5.0  # retry a board that couldn't be read
+
+
+def _layout(controller: WledController) -> str:
+    """Channel lengths, for logging changes, e.g. "270+270+360"."""
+    return "+".join(str(ch.length) for ch in controller.channels) if controller.channels else "none"
 
 
 class ControllerEntry:
@@ -141,6 +149,7 @@ class Registry:
             if match is None:
                 continue
             if match["ip"] != e.controller.host:
+                log.info("%s: board moved from %s to %s", e.id, e.controller.host, match["ip"])
                 e.controller.host = match["ip"]
                 e.last_attempt = 0.0  # re-read at the new address
             if not match.get("online", True):
@@ -149,6 +158,8 @@ class Registry:
     def refresh(self, entry: ControllerEntry) -> None:
         entry.refreshing = True
         entry.last_attempt = time.monotonic()
+        was_online, old_error = entry.online, entry.error
+        before = _layout(entry.controller)
         try:
             entry.controller.refresh()
             entry.online, entry.error = True, None
@@ -156,6 +167,18 @@ class Registry:
             entry.online, entry.error = False, str(e)
         finally:
             entry.refreshing = False
+        c = entry.controller
+        if entry.online and not was_online:
+            log.info("%s: online at %s, %d LEDs, %d channel(s)", entry.id, c.host,
+                     c.info.led_count if c.info else 0, len(c.channels or []))
+        elif not entry.online and (was_online or entry.error != old_error):
+            log.warning("%s: unreachable at %s: %s", entry.id, c.host, entry.error)
+        if entry.online and was_online and before != _layout(c):
+            log.info("%s: channels changed: %s -> %s", entry.id, before, _layout(c))
+        if entry.online and (was_online is False or before != _layout(c)):
+            for ch, warnings in zip(c.channels or [], channel_warnings(c.channels or [], c.outputs)):
+                for w in warnings:
+                    log.warning("%s/%d: %s", entry.id, ch.index + 1, w)
 
     def refresh_all(self) -> None:
         """Re-read every board now, in parallel, and wait for them all (each bounded by its HTTP timeout)."""

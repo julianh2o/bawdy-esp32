@@ -5,12 +5,15 @@ mDNS is multicast and doesn't cross subnets/VLANs; ``probe(ip)`` covers boards e
 
 from __future__ import annotations
 import ipaddress
+import logging
 import threading
 import time
 from typing import Any, Callable
 
 from wled.http import WledHttp
 from wled.models import WledError, board_channels, info_from_json
+
+log = logging.getLogger(__name__)
 
 WLED_SERVICE_TYPE = "_wled._tcp.local."
 
@@ -77,6 +80,7 @@ class WledBrowser:
             self._zc = Zeroconf(ip_version=IPVersion.V4Only)
         except OSError as e:
             self.error = f"Cannot start mDNS: {e}"
+            log.warning("%s", self.error)
             return
         self.error = None
         self._start_browser()
@@ -145,6 +149,7 @@ class WledBrowser:
             needs_probe = entry is None or entry["ip"] != ip or entry.get("info") is None
             if entry is None:
                 entry = manual or {"info": None, "probe_error": None, "first_seen": now}
+                log.info("Discovered %s at %s", self._instance(name), ip)
             entry.update({
                 "key": key,
                 "source": "mdns",

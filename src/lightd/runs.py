@@ -38,6 +38,7 @@ class Run:
         self.last_frames: dict[Target, bytes] = {}
         self.error: dict[str, Any] | None = None
         self.error_count = 0
+        self._logged_error: str | None = None
 
     @property
     def source(self) -> str:
@@ -55,6 +56,9 @@ class Run:
     def record_error(self, e: PatternError) -> None:
         self.error = {**e.to_dict(), "at": time.time()}
         self.error_count += 1
+        if str(e) != self._logged_error:  # once per distinct error, not every frame
+            self._logged_error = str(e)
+            log.warning("Run %s (%s): pattern error: %s", self.id, self.name or "ad-hoc pattern", e)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -121,6 +125,9 @@ class RunManager:
                 if not other.targets:
                     del self._runs[other.id]
             self._runs[run.id] = run
+        if save:  # restored runs are logged once, by the caller
+            log.info("Run %s: %s on %s%s", run.id, run.name or "ad-hoc pattern", ", ".join(map(str, parsed)),
+                     f" (scene {scene})" if scene else "")
         if save:
             self.save()
         return run
@@ -145,6 +152,7 @@ class RunManager:
         with self._lock:
             if self._runs.pop(run_id, None) is None:
                 raise KeyError(run_id)
+        log.info("Run %s stopped", run_id)
         self.save()
 
     def stop_all(self) -> None:
@@ -184,6 +192,8 @@ class RunManager:
     def set_output(self, enabled: Any) -> None:
         if not isinstance(enabled, bool):
             raise ValueError("'enabled' must be true or false")
+        if enabled != self.output:
+            log.info("Output %s", "on: lightd drives the boards" if enabled else "off: boards show their own effects")
         self.output = enabled
         self.save()
 

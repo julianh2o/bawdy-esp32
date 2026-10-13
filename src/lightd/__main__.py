@@ -9,8 +9,10 @@ import sys
 import threading
 from pathlib import Path
 
-from lightd import ApiServer, build
+from lightd import ApiServer, build, logs
 from lightd.config import ConfigError
+
+log = logging.getLogger("lightd")
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -34,7 +36,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="don't send UDP (frames are discarded)")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(levelname)s %(message)s")
+    logs.setup(verbose=args.verbose)
 
     transport = None
     if args.dry_run:
@@ -46,21 +48,21 @@ def main(argv: list[str] | None = None) -> int:
     try:
         controllers = app.registry.load()
     except ConfigError as e:
-        print(f"Invalid {args.controllers}: {e}", file=sys.stderr)
+        log.error("Invalid %s: %s", args.controllers, e)
         return 2
     if app.browser is not None:
         app.browser.start()
     app.registry.start()
     for err in app.runs.restore():
-        print(f"Could not restore run: {err}", file=sys.stderr)
+        log.warning("Could not restore run: %s", err)
     app.loop.start()
     server = ApiServer(app, args.host, args.port)
     server.start()
 
-    print(f"lightd on http://{args.host}:{server.port}  ·  {len(controllers)} controller(s) from {args.controllers}"
-          f"  ·  {len(app.runs.runs())} run(s) restored  ·  {args.fps:g} fps", flush=True)
+    log.info("lightd on http://%s:%d · %d controller(s) from %s · %d run(s) restored · %g fps",
+             args.host, server.port, len(controllers), args.controllers, len(app.runs.runs()), args.fps)
     for cid, c in controllers.items():
-        print(f"  • {cid} -> {c['ip']}:{c['port']}", flush=True)
+        log.info("  %s -> %s:%s", cid, c["ip"], c["port"])
 
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
@@ -69,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
             pass
     except KeyboardInterrupt:
         pass
-    print("Stopping: blacking out boards…", flush=True)
+    log.info("Stopping: blacking out boards…")
     server.stop()
     app.loop.stop(blackout=True)
     app.registry.stop()

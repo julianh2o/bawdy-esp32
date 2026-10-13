@@ -6,10 +6,11 @@ import logging
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from wled import WledController, WledError
 
+from lightd import logs
 from lightd.config import ConfigError, ControllerStore
 from lightd.lua import RUNTIME_PATH, PatternError, Pattern
 from lightd.patterns import LibraryError, PatternLibrary
@@ -35,7 +36,7 @@ class Lightd:
 
     def __init__(
         self, store: ControllerStore, registry: Registry, library: PatternLibrary, runs: RunManager, loop: Any,
-        scenes: SceneStore | None = None,
+        scenes: SceneStore | None = None, log_buffer: logs.LogBuffer | None = None,
     ) -> None:
         self.store = store
         self.registry = registry
@@ -43,13 +44,15 @@ class Lightd:
         self.runs = runs
         self.loop = loop
         self.scenes = scenes if scenes is not None else SceneStore(None, library)
+        self.logs = log_buffer if log_buffer is not None else logs.buffer
 
     @property
     def browser(self) -> Any:
         return self.registry.browser
 
 
-def _route(app: Lightd, method: str, path: str, body: dict[str, Any]) -> tuple[int, Any]:
+def _route(app: Lightd, method: str, path: str, body: dict[str, Any], query: dict[str, str] | None = None) -> tuple[int, Any]:
+    query = query or {}
     parts = [unquote(p) for p in path.strip("/").split("/")]
     if parts[:1] != ["api"]:
         raise ApiError(404, f"Not found: {path}")
@@ -69,6 +72,9 @@ def _route(app: Lightd, method: str, path: str, body: dict[str, Any]) -> tuple[i
             "output": app.runs.output,
             "errors": [{"run": r.id, **r.error} for r in runs if r.error],
         }
+
+    if head == "logs" and len(parts) == 1 and method == "GET":
+        return 200, _logs(app, query)
 
     if head == "runtime.lua" and method == "GET":
         return 200, RUNTIME_PATH.read_text(encoding="utf-8")
@@ -105,9 +111,11 @@ def _route(app: Lightd, method: str, path: str, body: dict[str, Any]) -> tuple[i
                 raise ApiError(400, "Expected {'controllers': {...}}")
             data = app.store.save(body["controllers"])
             app.registry.apply(data)
+            log.info("Configuration saved: %d controller(s)", len(data))
             return 200, {"status": "ok", **_config_state(app)}
         if parts[1:] == ["reload"] and method == "POST":
             app.registry.load()
+            log.info("Configuration reloaded from %s", app.store.path)
             return 200, {"status": "ok", **_config_state(app)}
 
     if head == "discovered":
@@ -191,9 +199,25 @@ def _route(app: Lightd, method: str, path: str, body: dict[str, Any]) -> tuple[i
 
     if head == "blackout" and method == "POST":
         app.runs.stop_all()
+        log.info("Blackout: all runs stopped")
         return 200, {"status": "ok"}
 
     raise ApiError(404, f"No endpoint {method} {path}")
+
+
+def _logs(app: Lightd, query: dict[str, str]) -> Any:
+    """Recent log records: ?since=<seq> (only newer ones), ?level=warning, ?limit=N (newest N, default 500),
+    ?format=text for plain text."""
+    try:
+        since = int(query.get("since") or 0)
+        limit = max(1, min(logs.MAX_RECORDS, int(query.get("limit") or 500)))
+        level = logs.parse_level(query.get("level"))
+    except ValueError as e:
+        raise ApiError(400, str(e))
+    records = app.logs.records(since=since, level=level, limit=limit)
+    if query.get("format") == "text":
+        return "".join(logs.format_text(r) + "\n" for r in records)
+    return {"logs": records, "last_seq": app.logs.last_seq}
 
 
 def _controllers(app: Lightd) -> list[dict[str, Any]]:
@@ -300,7 +324,9 @@ class _Handler(BaseHTTPRequestHandler):
     def _handle(self, method: str) -> None:
         try:
             body = self._body() if method in ("POST", "PUT", "PATCH") else {}
-            status, payload = _route(self.server.app, method, urlparse(self.path).path, body)
+            url = urlparse(self.path)
+            query = {k: v[-1] for k, v in parse_qs(url.query).items()}
+            status, payload = _route(self.server.app, method, url.path, body, query)
         except ApiError as e:
             status, payload = e.status, {"status": "error", "message": str(e), **e.extra}
         except PatternError as e:
@@ -310,7 +336,11 @@ class _Handler(BaseHTTPRequestHandler):
         except (ConfigError, TargetError, WledError, ValueError, TypeError) as e:
             status, payload = 400, {"status": "error", "message": str(e)}
         except OSError as e:
+            log.error("%s %s failed: %s", method, self.path, e)
             status, payload = 500, {"status": "error", "message": f"I/O error: {e}"}
+        except Exception as e:
+            log.exception("%s %s crashed", method, self.path)
+            status, payload = 500, {"status": "error", "message": f"Internal error: {e}"}
         self._send(status, payload)
 
     def do_GET(self) -> None:

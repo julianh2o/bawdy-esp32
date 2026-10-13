@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lighting Logs</title>
+  <link rel="stylesheet" href="/css/config.css">
+  <style>
+    .log { font-family: var(--mono); font-size: 12px; line-height: 1.5; padding: 12px 16px; margin: 0; }
+    .log-line { display: grid; grid-template-columns: max-content 7ch minmax(0, 1fr); gap: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .log-line .time, .log-line .logger { color: var(--muted); }
+    .log-line.WARNING .level { color: var(--warn); }
+    .log-line.ERROR .level, .log-line.CRITICAL .level { color: var(--err); }
+    .log-line.ERROR .msg, .log-line.CRITICAL .msg { color: var(--err); }
+    .log-line.DEBUG { color: var(--muted); }
+    .log-line pre { grid-column: 3; margin: 0; color: var(--err); }
+    select { font: inherit; }
+    @media (max-width: 640px) {
+      .log-line { grid-template-columns: max-content minmax(0, 1fr); }
+      .log-line .level { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-title">
+      <a href="/config" class="back-link" title="Back to setup">← Setup</a>
+      <h1>lightd log</h1>
+      <span id="status" class="pill">…</span>
+    </div>
+    <div class="topbar-actions">
+      <label class="small muted">Level
+        <select id="level">
+          <option value="debug">Debug</option>
+          <option value="info" selected>Info</option>
+          <option value="warning">Warnings</option>
+          <option value="error">Errors</option>
+        </select>
+      </label>
+      <label class="check small muted"><input type="checkbox" id="follow" checked> Follow</label>
+      <a class="btn btn-small" href="/engine/api/logs?format=text&limit=2000" target="_blank" rel="noopener">Raw</a>
+    </div>
+  </header>
+
+  <div id="log" class="log"><div class="muted">Loading…</div></div>
+
+  <script type="module">
+    const API = "/engine/api/logs";
+    const POLL_MS = 2000;
+    const MAX_LINES = 2000;
+    const $ = (id) => document.getElementById(id);
+    let since = 0;
+
+    function line(r) {
+      const row = document.createElement("div");
+      row.className = `log-line ${r.level}`;
+      const t = new Date(r.time * 1000);
+      const cells = [
+        ["time", t.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + t.toLocaleTimeString()],
+        ["level", r.level],
+        ["msg", null],
+      ];
+      for (const [cls, text] of cells) {
+        const span = document.createElement("span");
+        span.className = cls;
+        if (cls === "msg") {
+          const logger = document.createElement("span");
+          logger.className = "logger";
+          logger.textContent = `${r.logger}: `;
+          span.append(logger, r.message);
+        } else {
+          span.textContent = text;
+        }
+        row.append(span);
+      }
+      if (r.exception) {
+        const pre = document.createElement("pre");
+        pre.textContent = r.exception;
+        row.append(pre);
+      }
+      return row;
+    }
+
+    async function poll() {
+      const pill = $("status");
+      try {
+        const resp = await fetch(`${API}?since=${since}&level=${$("level").value}&limit=${MAX_LINES}`);
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.message || resp.statusText);
+        const box = $("log");
+        if (!since) box.replaceChildren();
+        if (!since && !data.logs.length) box.append(Object.assign(document.createElement("div"), { className: "muted", textContent: "Nothing logged yet." }));
+        else if (data.logs.length) box.querySelector(":scope > .muted")?.remove();
+        const atBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 40;
+        box.append(...data.logs.map(line));
+        while (box.childElementCount > MAX_LINES) box.firstElementChild.remove();
+        since = data.last_seq;
+        if (data.logs.length && $("follow").checked && (atBottom || data.logs.length === box.childElementCount)) {
+          window.scrollTo(0, document.body.scrollHeight);
+        }
+        pill.className = "pill ok";
+        pill.textContent = "live";
+      } catch (e) {
+        pill.className = "pill err";
+        pill.textContent = "lightd offline";
+        pill.title = e.message;
+      }
+    }
+
+    $("level").addEventListener("change", () => { since = 0; poll(); });
+    poll();
+    setInterval(poll, POLL_MS);
+  </script>
+</body>
+</html>

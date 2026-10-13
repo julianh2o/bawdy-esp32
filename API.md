@@ -24,6 +24,7 @@ curl $API/controllers                 # boards, channels (target, name, length, 
 curl -X POST $API/controllers/refresh  # re-read every board's segments and pixel counts now (else every 30 s)
 curl $API/patterns                    # library with each pattern's params schema
 curl $API/runs                        # what's playing
+curl "$API/logs?level=warning&limit=100"   # recent log (also ?since=<seq>, ?format=text); web view at /logs
 
 # Play a library pattern (params are optional; unknown ones fall back to defaults)
 curl -X POST $API/runs -H 'Content-Type: application/json' \

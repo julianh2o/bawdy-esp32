@@ -1,4 +1,4 @@
-"""Web UI server: the pattern editor (/) and setup page (/config) as static files, plus /engine/* proxied to lightd."""
+"""Web UI server: the pattern editor (/), setup page (/config) and log (/logs) as static files, plus /engine/* proxied to lightd."""
 
 from __future__ import annotations
 import json
@@ -101,6 +101,8 @@ class SequencerHandler(BaseHTTPRequestHandler):
             target = static_dir / "patterns.html"  # the pattern editor, with runs and scenes
         elif path == "/config":
             target = static_dir / "config.html"  # controller setup
+        elif path == "/logs":
+            target = static_dir / "logs.html"  # lightd's recent log
         else:
             rel = path.lstrip("/")
             target = static_dir / rel
