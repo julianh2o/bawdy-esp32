@@ -50,7 +50,7 @@ class SequencerHandler(BaseHTTPRequestHandler):
         if body is not None:
             req.add_header("Content-Type", self.headers.get("Content-Type", "application/json"))
         try:
-            with urllib.request.urlopen(req, timeout=5.0) as resp:
+            with urllib.request.urlopen(req, timeout=10.0) as resp:
                 status, payload, ctype = resp.status, resp.read(), resp.headers.get("Content-Type")
         except urllib.error.HTTPError as e:
             status, payload, ctype = e.code, e.read(), e.headers.get("Content-Type")

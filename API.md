@@ -21,6 +21,7 @@ API=https://lights.julianverse.net/engine/api
 
 curl $API/status                      # fps, boards online, runs, errors
 curl $API/controllers                 # boards, channels (target, name, length, linked, rgbw), brightness
+curl -X POST $API/controllers/refresh  # re-read every board's segments and pixel counts now (else every 30 s)
 curl $API/patterns                    # library with each pattern's params schema
 curl $API/runs                        # what's playing
 

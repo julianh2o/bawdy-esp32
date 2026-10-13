@@ -296,3 +296,59 @@ def board_channels(cfg: dict[str, Any] | None, state: dict[str, Any] | None, led
 def normalize_mac(mac: str | None) -> str:
     """``68:FE:71:a4:ad:b4`` / ``68fe71a4adb4`` -> ``68fe71a4adb4`` (empty if unknown)."""
     return "".join(c for c in (mac or "").lower() if c in "0123456789abcdef")
+
+
+def channel_warnings(channels: list[Channel], outputs: list[Channel]) -> list[list[str]]:
+    """Per channel, how its segment disagrees with the LED output it starts in: LEDs of the output no segment
+    lights (e.g. the output was lengthened in WLED but its segment wasn't), or a segment running past the output's
+    end. Each warning says how to fix it on the board. Only segment channels are checked."""
+    warnings: list[list[str]] = [[] for _ in channels]
+    if not outputs or not any(ch.segment is not None for ch in channels):
+        return warnings
+    lit = bytearray(max([o.start + o.length for o in outputs] + [ch.end for ch in channels]))
+    for ch in channels:
+        for start, count in ch.ranges:
+            lit[start:start + count] = b"\x01" * count
+
+    def where(o: Channel) -> str:
+        return f"the output on GPIO {','.join(map(str, o.pins))}" if o.pins else f"output {o.index + 1}"
+
+    for o in outputs:
+        end = o.start + o.length
+        for ch in channels:
+            # each segment (a linked channel has two) against the output it starts in
+            for seg, leds in ((ch.segment, ch.led_map), (ch.white_segment, ch.white)):
+                if seg is None or leds is None or not o.start <= leds.start < end or leds.end <= end:
+                    continue
+                warnings[ch.index].append(
+                    f"Segment {seg} runs to LED {leds.end - 1}, past the end of {where(o)} ({o.start}–{end - 1}, "
+                    f"{o.length} LEDs). Fix: in WLED, open Segments and set segment {seg}'s Stop to {end}, or "
+                    f"lengthen the output in Config → LED Preferences. Then press Refresh.")
+        mine = [ch for ch in channels if ch.segment is not None and o.start <= ch.start < end]
+        if not mine:
+            continue
+        gaps, i = [], o.start
+        while i < end:
+            if lit[i]:
+                i += 1
+                continue
+            j = i
+            while j < end and not lit[j]:
+                j += 1
+            gaps.append((i, j))
+            i = j
+        last = max(mine, key=lambda ch: ch.led_map.end)
+        for a, b in gaps:
+            text = (f"LEDs {a}–{b - 1} of {where(o)} ({o.start}–{end - 1}, {o.length} LEDs) aren't in any WLED "
+                    f"segment, so lightd can't light them.")
+            if b == end and a >= last.led_map.end:
+                fix = f"set segment {last.segment}'s Stop to {end}"
+            elif a == o.start and b <= min(ch.start for ch in mine):
+                first = min(mine, key=lambda ch: ch.start)
+                fix = f"set segment {first.segment}'s Start to {o.start}"
+            else:
+                fix = f"widen the segments so they cover LEDs {a}–{b - 1}"
+            text += (f" Fix: in WLED, open Segments and {fix} (or change the output's length in Config → LED "
+                     f"Preferences). Then press Refresh.")
+            warnings[last.index if b == end else mine[0].index].append(text)
+    return warnings

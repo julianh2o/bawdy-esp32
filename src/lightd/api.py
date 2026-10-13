@@ -74,12 +74,12 @@ def _route(app: Lightd, method: str, path: str, body: dict[str, Any]) -> tuple[i
         return 200, RUNTIME_PATH.read_text(encoding="utf-8")
 
     if head == "controllers" and len(parts) == 1 and method == "GET":
-        # Live state: board info, channels as the board reports them (plus brightness), online, current IP.
-        controllers = [e.to_dict() for e in app.registry.entries()]
-        for c in controllers:
-            for ch in c["channels"]:
-                ch["brightness"] = app.runs.brightness(Target(c["id"], ch["index"]))
-        return 200, {"controllers": controllers}
+        return 200, {"controllers": _controllers(app)}
+
+    if head == "controllers" and parts[1:] == ["refresh"] and method == "POST":
+        # Re-read every board's info, outputs and segments now instead of waiting for the next periodic refresh.
+        app.registry.refresh_all()
+        return 200, {"status": "ok", "controllers": _controllers(app)}
 
     if head == "output" and len(parts) == 1:
         # Master switch: off = send nothing, so the boards show their own WLED effects.
@@ -194,6 +194,15 @@ def _route(app: Lightd, method: str, path: str, body: dict[str, Any]) -> tuple[i
         return 200, {"status": "ok"}
 
     raise ApiError(404, f"No endpoint {method} {path}")
+
+
+def _controllers(app: Lightd) -> list[dict[str, Any]]:
+    """Live state: board info, channels as the board reports them (plus brightness), online, current IP."""
+    controllers = [e.to_dict() for e in app.registry.entries()]
+    for c in controllers:
+        for ch in c["channels"]:
+            ch["brightness"] = app.runs.brightness(Target(c["id"], ch["index"]))
+    return controllers
 
 
 def _config_state(app: Lightd) -> dict[str, Any]:

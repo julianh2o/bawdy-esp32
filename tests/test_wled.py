@@ -7,7 +7,7 @@ import unittest
 
 from wled import FakeTransport, WledBrowser, WledController, WledError, ddp_packets
 from wled.ddp import parse_header
-from wled.models import board_channels, info_from_json, normalize_mac, outputs_from_cfg, segments_from_state
+from wled.models import board_channels, channel_warnings, info_from_json, normalize_mac, outputs_from_cfg, segments_from_state
 
 INFO = {"name": "Stage left", "mac": "68fe71a4adb4", "ver": "0.15.0", "arch": "esp32", "leds": {"count": 810}}
 CFG = {"hw": {"led": {"ins": [
@@ -163,6 +163,29 @@ class TestModels(unittest.TestCase):
         frame = bytearray(5 * 3)
         Leds(0, 5, group=1, spacing=1).place(frame, 3, b"\x09" * 3 * 9, 3)  # more pixels than LEDs: cut
         self.assertEqual(frame[::3], bytes([9, 0, 9, 0, 9]))
+
+    def test_segment_mismatch_warnings(self):
+        def warnings(cfg, state):
+            return channel_warnings(board_channels(cfg, state), outputs_from_cfg(cfg))
+
+        segs = lambda *spans: {"seg": [{"id": i, "start": a, "stop": b} for i, (a, b) in enumerate(spans)]}
+        self.assertEqual(warnings(CFG, segs((0, 270), (270, 540), (540, 810))), [[], [], []])
+        self.assertEqual(warnings(GOVEE_INTERLEAVED_CFG, GOVEE_INTERLEAVED_STATE), [[]])  # interleaved: all lit
+        self.assertEqual(warnings(GOVEE_CFG, GOVEE_STATE), [[]])  # linked across two outputs
+        self.assertEqual(warnings(CFG, None), [[], [], []])  # channels from outputs: nothing to compare
+
+        # Output 3 lengthened to 360 in WLED; its segment still stops at 810.
+        longer = {"hw": {"led": {"ins": CFG["hw"]["led"]["ins"][:2] + [{"start": 540, "len": 360, "pin": [12]}]}}}
+        w = warnings(longer, segs((0, 270), (270, 540), (540, 810)))
+        self.assertEqual((w[0], w[1]), ([], []))
+        (msg,) = w[2]
+        self.assertIn("LEDs 810–899 of the output on GPIO 12", msg)
+        self.assertIn("set segment 2's Stop to 900", msg)
+
+        w = warnings(CFG, segs((0, 270), (270, 540), (540, 900)))  # segment past the last output's end
+        self.assertIn("set segment 2's Stop to 810", w[2][0])
+        w = warnings(CFG, segs((0, 270), (300, 540), (540, 810)))  # gap at the start of output 2
+        self.assertIn("set segment 1's Start to 270", w[1][0])
 
     def test_info_and_mac(self):
         info = info_from_json(INFO)

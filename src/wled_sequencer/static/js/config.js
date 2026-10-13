@@ -324,6 +324,11 @@ function renderChannel(c, ch, output, ip) {
     ? tag("linked", "", `Segments "${segName}" and its white segment are driven as one channel: the pattern's r, g, b go to the RGB LEDs, its w to the white LEDs`)
     : null;
 
+  // The segment and its LED output disagree (e.g. the output was lengthened in WLED but not the segment).
+  const warnTag = output?.warnings?.length
+    ? tag("⚠ segment mismatch", "warn", output.warnings.join("\n\n"))
+    : null;
+
   const extra = !output
     ? el("button", {
         class: "btn btn-small btn-ghost",
@@ -352,6 +357,7 @@ function renderChannel(c, ch, output, ip) {
       el("span", { class: "channel-name" }, `Ch ${ch + 1}`),
       nameInput,
       linkedTag,
+      warnTag,
       el("span", { class: "channel-stat" }, details),
       reversed,
       extra));
@@ -547,6 +553,26 @@ async function pollLive() {
   }
 }
 
+async function refreshBoards() {
+  const btn = $("refresh-btn");
+  btn.disabled = true;
+  btn.textContent = "Refreshing…";
+  try {
+    S.live = (await api("POST", "/controllers/refresh")).controllers;
+    const offline = S.live.filter((c) => !c.online);
+    banner(offline.length
+      ? `Refreshed. Couldn't reach ${offline.map((c) => c.id).join(", ")}.`
+      : `Refreshed ${plural(S.live.length, "board")}.`, offline.length ? "err" : "ok");
+    renderControllers();
+    pollStatus();
+  } catch (e) {
+    banner(`Refresh failed: ${e.message}`, "err");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Refresh";
+  }
+}
+
 async function pollDiscovery() {
   try {
     S.discovery = await api("GET", "/discovered");
@@ -584,6 +610,7 @@ async function bootstrap() {
     renderAll();
   });
   $("add-controller-btn").addEventListener("click", () => openControllerDialog({ mode: "add" }));
+  $("refresh-btn").addEventListener("click", refreshBoards);
   $("rescan-btn").addEventListener("click", async () => {
     try {
       await api("POST", "/discovered/rescan");

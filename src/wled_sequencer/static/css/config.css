@@ -422,3 +422,4 @@ input[type="number"] { width: 90px; }
 .errors:empty { display: none; }
 
 .footer { padding: 4px 20px 20px; }
+.tag[title] { cursor: help; }

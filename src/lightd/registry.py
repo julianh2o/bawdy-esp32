@@ -6,6 +6,7 @@ import time
 from typing import Any, Callable
 
 from wled import WledBrowser, WledController, WledError, normalize_mac
+from wled.models import channel_warnings
 
 from lightd.config import ControllerStore
 
@@ -38,6 +39,7 @@ class ControllerEntry:
         c = self.controller
         board_channels = c.channels or []
         configured = self.config.get("channels") or []
+        warnings = channel_warnings(board_channels, c.outputs)
         channels = []
         for i in range(max(len(board_channels), len(configured))):
             cfg = configured[i] if i < len(configured) else {}
@@ -51,6 +53,7 @@ class ControllerEntry:
                 "on_board": ch is not None,
                 **({k: v for k, v in ch.to_dict().items() if k not in ("index", "name")} if ch else {"length": None}),
                 "segment_name": ch.name if ch else None,
+                "warnings": warnings[i] if ch else [],
             })
         return {
             "id": self.id,
@@ -153,6 +156,16 @@ class Registry:
             entry.online, entry.error = False, str(e)
         finally:
             entry.refreshing = False
+
+    def refresh_all(self) -> None:
+        """Re-read every board now, in parallel, and wait for them all (each bounded by its HTTP timeout)."""
+        self._follow_discovery()
+        threads = [threading.Thread(target=self.refresh, args=(e,), daemon=True, name=f"Refresh-{e.id}")
+                   for e in self.entries()]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
 
     def maintain(self) -> None:
         """One maintenance pass: follow discovery, then (re)read boards that are due, each in its own thread."""

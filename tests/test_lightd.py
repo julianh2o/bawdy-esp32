@@ -469,6 +469,14 @@ class TestApi(RunsTest):
         self.assertEqual(c["channels"][0]["length"], 270)
         self.assertEqual((c["channels"][0]["linked"], c["channels"][0]["segment_name"]), (False, None))
 
+    def test_controllers_refresh(self):
+        board = self.registry.get("a").controller
+        board.channels = None  # forget what the board reported
+        status, res = self.call("POST", "/api/controllers/refresh")
+        self.assertEqual(status, 200, res)
+        self.assertIsNotNone(board.channels)
+        self.assertEqual([ch["length"] for ch in res["controllers"][0]["channels"]], [270, 270, 270])
+
     def test_run_lifecycle(self):
         status, run = self.call("POST", "/api/runs", {"targets": ["a/1"], "pattern": "chase", "params": {"width": 3}})
         self.assertEqual(status, 200, run)
