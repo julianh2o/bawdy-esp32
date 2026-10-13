@@ -153,6 +153,8 @@
 .pe-play { font-size: 10px; color: var(--accent); }
 .pe-scene-btn { padding: 0 6px; }
 .pe-scene-btn svg { display: block; }
+#stop-all-btn { padding: 0 8px; }
+#stop-all-btn svg { display: block; }
 .pe-runs-head { margin-top: 20px; margin-bottom: 8px; }
 
 .pe-run { padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }

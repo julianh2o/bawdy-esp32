@@ -28,7 +28,7 @@ over when they're ready, and only then is the retired code deleted.
 | 1. `wled` | **Done**: `src/wled/` (discovery, HTTP, DDP, `WledController`), tests in `tests/test_wled.py` |
 | 2. Lua runtime | **Done**: `src/lightd/runtime.lua` (shared with the browser) + `lua.py`; 10 built-in patterns in `patterns/` |
 | 3. `lightd` | **Done**: `python -m lightd`; tests in `tests/test_lightd.py` |
-| 4. Web | **Done**: `/patterns` editor; `/config` uses lightd's config API (`/api/config`, `/api/discovered`, `/api/identify`). The web server is static files + sequences + the `/engine/*` proxy |
+| 4. Web | **Done**: pattern editor at `/` (also `/patterns`); `/config` uses lightd's config API (`/api/config`, `/api/discovered`, `/api/identify`). The web server is static files + the `/engine/*` proxy; the old web sequencer is removed |
 | 5. Switch over | **Done for Docker**: the daemon image runs lightd with `config/` mounted read-write. Old entry points (`run.py`, `run-stack`) remain until phase 6 |
 | 6. Delete retired code | Not started |
 
@@ -71,7 +71,7 @@ Defaults chosen for the open items: port 8765, user patterns in `config/patterns
 | Discovery + `controllers.json` writes | Owned by `lightd`. The web server serves static files and proxies to `lightd` |
 | Web UI, first version | `/config` page and a pattern editor (code editor, in-browser preview, run on target) |
 | Browser Lua | [wasmoon](https://github.com/ceifa/wasmoon), Lua 5.4 in WASM, so behavior matches `lupa` |
-| Timeline sequencer (web) | Parked; ported later |
+| Timeline sequencer (web) | Removed; a timeline may come back later on top of runs and scenes |
 | Java sequencer | Kept; ported to the new API later |
 | Universe / patch / fixtures | Parked: left in the repo, unused |
 | Simulator | Parked |
@@ -216,7 +216,10 @@ end
 ```
 
 - **Contract**: `pixel(n, t, p)` returns `r, g, b` floats in 0..1, plus an optional `w` (white) that lights white
-  LEDs where the channel has them and is added to `r, g, b` where it doesn't.
+  LEDs where the channel has them and is added to `r, g, b` where it doesn't. If a pattern leaves `w` out, white-capable
+  channels get it extracted: `w = min(r, g, b)`, subtracted from each, so saturated colors stay on RGB and whites and
+  pastels use the white chip. The global `WHITE` is true while rendering for white-capable LEDs (the `white` pattern
+  uses it to tint the white chip, whose temperature is a param).
   - `n` runs `0..COUNT-1` along the channel and is flipped when the channel is `reversed`.
   - `COUNT` is a global set per target.
   - `t` is Unix time in seconds (wall clock), the same for every channel and run.
@@ -250,7 +253,7 @@ The web server (`wled_sequencer/server.py`, slimmed down) serves static files an
 src/
   wled/               new: low-level controller library
   lightd/             new: daemon
-  wled_sequencer/     web server + /config + pattern editor (timeline parked)
+  wled_sequencer/     web server: pattern editor (/) + /config
   wled_engine/        parked pieces only (patch, spatial, sequence_runner) until deleted or revived
   wled_simulator/     parked
 patterns/             built-in Lua patterns
@@ -296,7 +299,6 @@ tests/
 
 | What | Revisit when |
 |---|---|
-| `wled_sequencer` timeline (`models.py`, `player.js`, `engine_client.js`, `sequences/`) | Porting the sequencer: blocks become runs |
 | `wled_engine/sequence_runner.py` | Same |
 | `wled_engine/patch/`, `wled_engine/spatial/`, `universe.json`, `patch.json`, `data/presets/`, `data/venue/` | If geometry (x/y) comes back |
 | `wled_simulator/` | If a no-hardware test target is needed |

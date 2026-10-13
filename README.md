@@ -6,7 +6,7 @@ The platform provides a **3-tier layered architecture**: a high-throughput **vir
 
 > **Refactor in progress.** The new stack is **lightd** (`src/lightd`, `python -m lightd`), which runs Lua
 > patterns on WLED controller channels and owns the configuration, on top of the low-level **`wled`** library
-> (`src/wled`). The web UI's `/config` (setup) and `/patterns` (editor) pages talk to it, and Docker runs it as
+> (`src/wled`). The web UI's pattern editor (`/`) and setup page (`/config`) talk to it, and Docker runs it as
 > the daemon. The engine described below is being retired; see [REFACTOR.md](REFACTOR.md) and
 > [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 

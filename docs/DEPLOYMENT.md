@@ -5,7 +5,7 @@ Two images, published to Docker Hub and run together by `docker-compose.yaml`:
 | Service / container | Image | Dockerfile | Purpose |
 |---|---|---|---|
 | `daemon` / `bawdy-lights-daemon` | `julianh2o/bawdy-lights-daemon` | `Dockerfile.daemon` | **lightd**: runs Lua patterns on WLED channels, owns the configuration. REST API on port 8765, DDP to the boards. |
-| `web` / `bawdy-lights-web` | `julianh2o/bawdy-lights-web` | `Dockerfile.web` | Browser UI on port 8080: `/config` (setup), `/patterns` (editor, runs and scenes), sequencer. Proxies `/engine/*` to lightd. |
+| `web` / `bawdy-lights-web` | `julianh2o/bawdy-lights-web` | `Dockerfile.web` | Browser UI on port 8080: the pattern editor (runs and scenes) at `/`, setup at `/config` (the gear icon). Proxies `/engine/*` to lightd. |
 | `sim` / `bawdy-lights-sim` (profile) | `bawdy-lights-sim` (local build only) | `Dockerfile.daemon --target sim` | Parked: the old universe/patch simulator. Doesn't work with lightd. |
 
 ## 1. Prepare the network and boards
@@ -28,8 +28,8 @@ lightd owns the configuration in `config/`:
 | File | What | Written by |
 |---|---|---|
 | `controllers.json` | Adopted boards: id, IP, port, MAC/host, channel names and `reversed` flags | `/config` page (via lightd), or by hand |
-| `patterns/*.lua` | Your saved patterns | `/patterns` page (via lightd) |
-| `scenes.json` | Scenes: named sets of patterns with params on channels | `/patterns` page, "Save as scene" (via lightd) |
+| `patterns/*.lua` | Your saved patterns | Pattern editor (via lightd) |
+| `scenes.json` | Scenes: named sets of patterns with params on channels | Pattern editor, "Save as scene" (via lightd) |
 | `lightd-state.json` | Patterns currently running and channel brightness, restored on restart | lightd |
 
 **Web UI (`http://<docker-host>:8080/config`)** lists the adopted controllers. Each one expands into its channels: the board's LED outputs, with GPIO pins and LED counts as lightd reads them from the board. Name each channel and tick **Reversed** if pixel 0 is at the far end. Below the list, a collapsed "N unadopted boards discovered" section shows boards lightd found on the LAN that aren't adopted yet. **Identify** blinks LEDs white for a few seconds so you can tell which physical strip is which: on a board it blinks every LED, on a channel only that output's LEDs.
@@ -98,10 +98,6 @@ Both containers use `network_mode: host`:
 ### Simulator (parked)
 
 The `sim` profile runs the old universe/patch simulator, which pairs with the old engine daemon (`run.py daemon --simulator`), not lightd. To try lightd without hardware, run it with `LIGHTD_DRY_RUN=true`: it renders frames but sends nothing.
-
-### Sequences
-
-Saved sequences live in the `sequences` named volume (`/data/sequences`) and survive `docker compose down && up`. `docker compose down -v` deletes them.
 
 ### Updating
 

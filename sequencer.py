@@ -27,7 +27,7 @@ def parse_args() -> argparse.ArgumentParser:
     parser.add_argument(
         "--web",
         action="store_true",
-        help="Launch legacy browser-based web application instead of native Java GUI",
+        help="Serve the browser UI (pattern editor and setup) instead of launching the native Java GUI",
     )
     parser.add_argument(
         "--port",
@@ -49,11 +49,6 @@ def parse_args() -> argparse.ArgumentParser:
         "--no-browser",
         action="store_true",
         help="Do not automatically open web browser in web mode (server-only; also set for containers)",
-    )
-    parser.add_argument(
-        "--sequences",
-        default=os.environ.get("SEQUENCES_DIR") or None,
-        help="Directory for saved sequences (default: ./sequences) [SEQUENCES_DIR]",
     )
     return parser
 
@@ -102,21 +97,18 @@ def run_web_app(args: argparse.Namespace, console: Console) -> None:
     import webbrowser
     from wled_sequencer.server import SequencerAppServer
 
-    app_server = SequencerAppServer(
-        host=args.host, port=args.port, sequences_dir=args.sequences, engine_url=args.engine
-    )
+    app_server = SequencerAppServer(host=args.host, port=args.port, engine_url=args.engine)
     app_server.start()
 
     url = f"http://{args.host}:{app_server.port}"
 
     console.print()
     console.print("[bold yellow]══════════════════════════════════════════════════════════════[/bold yellow]")
-    console.print("[bold cyan]       WLED Pattern Sequencer Studio [Web Browser Edition]     [/bold cyan]")
+    console.print("[bold cyan]       Lights web UI                                           [/bold cyan]")
     console.print("[bold yellow]══════════════════════════════════════════════════════════════[/bold yellow]")
-    console.print(f"  • Web Studio:    [bold green]{url}[/bold green]")
-    console.print(f"  • Sequences Dir: [dim]{app_server.sequences_dir}[/dim]")
+    console.print(f"  • Patterns:      [bold green]{url}[/bold green]")
+    console.print(f"  • Setup:         [bold green]{url}/config[/bold green]")
     console.print(f"  • Engine Target: [cyan]{args.engine}[/cyan]")
-    console.print(f"  • Setup:         [bold green]{url}/config[/bold green]   Patterns: [bold green]{url}/patterns[/bold green]")
     console.print()
     console.print("Press [bold red]Ctrl+C[/bold red] to stop.")
     console.print()
@@ -136,10 +128,10 @@ def run_web_app(args: argparse.Namespace, console: Console) -> None:
         while True:
             time.sleep(1.0)
     except KeyboardInterrupt:
-        console.print("\n[yellow]Shutting down Web Sequencer...[/yellow]")
+        console.print("\n[yellow]Shutting down the web UI...[/yellow]")
     finally:
         app_server.stop()
-        console.print("[green]Web Sequencer stopped cleanly.[/green]")
+        console.print("[green]Web UI stopped cleanly.[/green]")
 
 
 def main() -> None:

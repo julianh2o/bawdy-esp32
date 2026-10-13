@@ -1,9 +1,8 @@
-"""HTTP server for Pattern Sequencer web application and sequence storage."""
+"""Web UI server: the pattern editor (/) and setup page (/config) as static files, plus /engine/* proxied to lightd."""
 
 from __future__ import annotations
 import json
 import mimetypes
-import os
 import threading
 import urllib.error
 import urllib.request
@@ -12,11 +11,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from wled_sequencer.models import SequenceData, SequenceRepository
-
 
 class SequencerHandler(BaseHTTPRequestHandler):
-    """HTTP Request Handler serving static UI assets and sequence storage API."""
+    """Serves the static UI and proxies /engine/* to lightd."""
 
     server: SequencerServer
 
@@ -40,12 +37,6 @@ class SequencerHandler(BaseHTTPRequestHandler):
 
     def _send_error(self, status: int, msg: str) -> None:
         self._send_json(status, {"status": "error", "message": msg})
-
-    def _read_body(self) -> dict[str, Any]:
-        length = int(self.headers.get("Content-Length", 0))
-        if length == 0:
-            return {}
-        return json.loads(self.rfile.read(length).decode("utf-8"))
 
     def _proxy_to_engine(self) -> None:
         """Forward /engine/<path> to the configured daemon so browsers only talk to this server."""
@@ -90,78 +81,26 @@ class SequencerHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self._try_proxy():
             return
-        parsed = urlparse(self.path)
-        path = unquote(parsed.path.rstrip("/"))
-
-        # 1. API: List sequences
-        if path == "/api/sequences":
-            seqs = self.server.repo.list_sequences()
-            self._send_json(200, seqs)
-            return
-
-        # 2. API: Load specific sequence
-        if path.startswith("/api/sequences/"):
-            parts = path.split("/")
-            if len(parts) == 4:
-                filename = parts[3]
-                seq = self.server.repo.load_sequence(filename)
-                if seq is None:
-                    self._send_error(404, f"Sequence '{filename}' not found")
-                    return
-                self._send_json(200, seq.to_dict())
-                return
-
-        # 3. Static files
-        self._serve_static(path)
+        self._serve_static(unquote(urlparse(self.path).path.rstrip("/")))
 
     def do_POST(self) -> None:
-        if self._try_proxy():
-            return
-        parsed = urlparse(self.path)
-        path = unquote(parsed.path.rstrip("/"))
-
-        if path == "/api/sequences":
-            try:
-                body = self._read_body()
-                seq = SequenceData.from_dict(body)
-                fname = self.server.repo.save_sequence(seq)
-                self._send_json(200, {"status": "ok", "filename": fname, "name": seq.name})
-            except Exception as e:
-                self._send_error(400, f"Failed to save sequence: {e}")
-            return
-
-        self._send_error(404, f"Unknown endpoint: {path}")
+        if not self._try_proxy():
+            self._send_error(404, f"Unknown endpoint: {urlparse(self.path).path}")
 
     def do_PATCH(self) -> None:
         if not self._try_proxy():
             self._send_error(404, f"Unknown endpoint: {urlparse(self.path).path}")
 
     def do_DELETE(self) -> None:
-        if self._try_proxy():
-            return
-        parsed = urlparse(self.path)
-        path = unquote(parsed.path.rstrip("/"))
-
-        if path.startswith("/api/sequences/"):
-            parts = path.split("/")
-            if len(parts) == 4:
-                filename = parts[3]
-                deleted = self.server.repo.delete_sequence(filename)
-                if deleted:
-                    self._send_json(200, {"status": "ok", "deleted": filename})
-                else:
-                    self._send_error(404, f"Sequence '{filename}' not found")
-                return
-
-        self._send_error(404, f"Unknown endpoint: {path}")
+        if not self._try_proxy():
+            self._send_error(404, f"Unknown endpoint: {urlparse(self.path).path}")
 
     def _serve_static(self, path: str) -> None:
         static_dir = self.server.static_dir
-        if path == "" or path == "/":
-            target = static_dir / "index.html"
-        elif path in ("/config", "/patterns"):
-            # Controller setup and the pattern editor (with scenes); both talk to lightd through /engine/*.
-            target = static_dir / f"{path.lstrip('/')}.html"
+        if path in ("", "/", "/patterns"):
+            target = static_dir / "patterns.html"  # the pattern editor, with runs and scenes
+        elif path == "/config":
+            target = static_dir / "config.html"  # controller setup
         else:
             rel = path.lstrip("/")
             target = static_dir / rel
@@ -196,43 +135,28 @@ class SequencerHandler(BaseHTTPRequestHandler):
 
 
 class SequencerServer(ThreadingHTTPServer):
-    """Threading HTTP server with sequence repository and static asset directory."""
+    """Threading HTTP server for the static UI and the lightd proxy."""
 
-    def __init__(
-        self,
-        server_address: tuple[str, int],
-        repo: SequenceRepository,
-        static_dir: Path,
-        engine_url: str = "http://127.0.0.1:8765",
-    ) -> None:
-        self.repo = repo
+    def __init__(self, server_address: tuple[str, int], static_dir: Path, engine_url: str = "http://127.0.0.1:8765") -> None:
         self.static_dir = static_dir
         self.engine_url = engine_url
         super().__init__(server_address, SequencerHandler)
 
 
 class SequencerAppServer:
-    """Lifecycle manager for the Pattern Sequencer web application server."""
+    """Starts and stops the web UI server in a background thread."""
 
     def __init__(
         self,
         host: str = "127.0.0.1",
         port: int = 8081,
-        sequences_dir: Path | str | None = None,
         static_dir: Path | str | None = None,
         engine_url: str = "http://127.0.0.1:8765",
     ) -> None:
         self.host = host
         self.port = port
         self.engine_url = engine_url
-
-        # Resolve directories
-        base_dir = Path(__file__).resolve().parent
-        self.static_dir = Path(static_dir) if static_dir else base_dir / "static"
-
-        root_dir = base_dir.parent.parent
-        self.sequences_dir = Path(sequences_dir) if sequences_dir else root_dir / "sequences"
-        self.repo = SequenceRepository(self.sequences_dir)
+        self.static_dir = Path(static_dir) if static_dir else Path(__file__).resolve().parent / "static"
 
         self.server: SequencerServer | None = None
         self._thread: threading.Thread | None = None
@@ -244,7 +168,7 @@ class SequencerAppServer:
     def start(self) -> None:
         if self.is_running:
             return
-        self.server = SequencerServer((self.host, self.port), self.repo, self.static_dir, self.engine_url)
+        self.server = SequencerServer((self.host, self.port), self.static_dir, self.engine_url)
         self.port = self.server.server_port
         self._thread = threading.Thread(target=self.server.serve_forever, daemon=True, name="WledSequencerServer")
         self._thread.start()
@@ -264,7 +188,7 @@ def main() -> None:
     import time
     from rich.console import Console
 
-    parser = argparse.ArgumentParser(description="WLED Pattern Sequencer Studio Server")
+    parser = argparse.ArgumentParser(description="Lights web UI server")
     parser.add_argument("--port", type=int, default=8081, help="Web port (default: 8081)")
     parser.add_argument("--host", default="127.0.0.1", help="Host address (default: 127.0.0.1)")
     args = parser.parse_args()
@@ -272,7 +196,7 @@ def main() -> None:
     console = Console()
     app = SequencerAppServer(host=args.host, port=args.port)
     app.start()
-    console.print(f"[bold green]⚡ WLED Pattern Sequencer running on http://{args.host}:{app.port}[/bold green]")
+    console.print(f"[bold green]⚡ Lights web UI running on http://{args.host}:{app.port}[/bold green]")
     console.print("Press [bold yellow]Ctrl+C[/bold yellow] to stop.")
     try:
         while True:

@@ -1,5 +1,5 @@
 /**
- * Pattern editor (/patterns): edit Lua patterns, preview them in the browser, run them on channels with params and
+ * Pattern editor (/, also /patterns): edit Lua patterns, preview them in the browser, run them on channels with params and
  * brightness, save what's running as a scene and activate scenes.
  *
  * Talks to lightd through the web server's /engine/* proxy. The preview runs lightd's own
@@ -22,7 +22,8 @@ const SAVE_ICON = `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="
 const TEMPLATE = `-- pixel(n, t, p) runs for every pixel, every frame.
 --   n: pixel number, 0 .. COUNT - 1      t: Unix time in seconds (the same on every channel)
 --   p: params (declared below)           return r, g, b in 0 .. 1, and optionally w (white)
---   w lights white LEDs (RGBW strips, linked Govee white); on RGB-only LEDs it's added to r, g, b
+--   w lights white LEDs (RGBW strips, linked Govee white); on RGB-only LEDs it's added to r, g, b.
+--   Leave w out and white LEDs get the white part of r, g, b automatically. WHITE: true on white-capable LEDs
 -- Helpers: hsv(h, s, v), mix(a, b, k), clamp(x, lo, hi), noise(x, y), hash(n, seed), color("#rrggbb")
 
 params = {

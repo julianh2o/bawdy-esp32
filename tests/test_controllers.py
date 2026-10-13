@@ -78,7 +78,7 @@ class TestEngineProxy(unittest.TestCase):
         daemon.start()
         with tempfile.TemporaryDirectory() as d:
             app = SequencerAppServer(
-                host="127.0.0.1", port=0, sequences_dir=d, engine_url=f"http://127.0.0.1:{daemon.port}"
+                host="127.0.0.1", port=0, engine_url=f"http://127.0.0.1:{daemon.port}"
             )
             app.start()
             try:
@@ -91,7 +91,7 @@ class TestEngineProxy(unittest.TestCase):
 
     def test_proxy_reports_502_when_engine_down(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            app = SequencerAppServer(host="127.0.0.1", port=0, sequences_dir=d, engine_url="http://127.0.0.1:1")
+            app = SequencerAppServer(host="127.0.0.1", port=0, engine_url="http://127.0.0.1:1")
             app.start()
             try:
                 with self.assertRaises(urllib.error.HTTPError) as ctx:
