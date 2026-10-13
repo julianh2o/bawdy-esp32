@@ -112,6 +112,28 @@ class TestLua(unittest.TestCase):
             Pattern("function pixel(n, t, p) return 1, 0, 0, 'x' end").render(1, 0)
         self.assertIn("optionally w", str(cm.exception))
 
+    def test_white_is_extracted_on_white_capable_leds(self):
+        p = Pattern("function pixel(n, t, p) return 1, 0.6, 0.2 end")
+        self.assertEqual(p.render(1, 0), bytes([255, 153, 51]))  # RGB strip: unchanged
+        self.assertEqual(p.render(1, 0, rgbw=True), bytes([204, 102, 0, 51]))  # common 0.2 moves to w
+        sat = Pattern("function pixel(n, t, p) return hsv(0.3, 1, 1) end")
+        self.assertEqual(sat.render(1, 0, rgbw=True)[3], 0)  # saturated color: no white
+        own = Pattern("function pixel(n, t, p) return 1, 1, 1, 0 end")
+        self.assertEqual(own.render(1, 0, rgbw=True), bytes([255, 255, 255, 0]))  # explicit w: left alone
+        flag = Pattern("function pixel(n, t, p) return WHITE and 1 or 0, 0, 0, 0 end")
+        self.assertEqual((flag.render(1, 0)[0], flag.render(1, 0, rgbw=True)[0]), (0, 255))
+
+    def test_white_pattern_uses_the_white_chip(self):
+        lib = PatternLibrary(REPO / "patterns", None)
+        p = Pattern(lib.get("white")["source"])
+        rgb = p.render(1, 0)
+        self.assertEqual(rgb[0], 255)
+        p.set_params({"kelvin": 4000, "white_led": 4000})
+        self.assertEqual(p.render(1, 0, rgbw=True), bytes([0, 0, 0, 255]))  # matches the chip: all white
+        p.set_params({"kelvin": 2700, "white_led": 4000})
+        r, g, b, w = p.render(1, 0, rgbw=True)
+        self.assertTrue(w > 100 and r > g >= b == 0)  # white chip tinted warmer with red
+
     def test_params_schema_and_coercion(self):
         p = Pattern('params = { speed = { type = "number", default = 2, min = 0, max = 5 }, c = "#ff0000" }\n' + RED)
         self.assertEqual(p.schema["speed"], {"type": "number", "default": 2, "min": 0, "max": 5})

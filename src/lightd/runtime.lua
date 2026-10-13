@@ -5,7 +5,10 @@
 --   params = { speed = { type = "number", default = 1, min = 0, max = 5 }, ... }   -- optional
 --   function pixel(n, t, p) return r, g, b, w end   -- n: 0..COUNT-1, t: Unix time in seconds, r/g/b/w: 0..1
 -- w (white) is optional. LEDs with a white chip (RGBW strips, linked Govee white segments) show it as white;
--- on RGB-only LEDs it's added to r, g and b.
+-- on RGB-only LEDs it's added to r, g and b. When a pattern leaves w out and the LEDs have a white chip, the white
+-- is taken out of the color: w = min(r, g, b), subtracted from each, so whites and pastels use the white chip while
+-- saturated colors (no common part) stay on RGB. Returning w (even 0) turns that off.
+-- WHITE is true while rendering for LEDs with a white chip, for patterns that want to handle white themselves.
 
 local M = {}
 
@@ -104,6 +107,7 @@ function M.compile(source)
   env.print = function() end
   for k, v in pairs(M.helpers) do env[k] = v end
   env.COUNT = 1
+  env.WHITE = false
 
   local chunk, err = load(source, "=pattern", "t", env)
   if not chunk then return nil, err end
@@ -189,14 +193,22 @@ local function hex4(r, g, b, w) return format("%02x%02x%02x%02x", r, g, b, w) en
 
 local function loop(env, count, t, p, reversed, rgbw, fmt)
   env.COUNT = count
+  env.WHITE = rgbw and true or false
   local pixel = env.pixel
   local out = {}
   for i = 0, count - 1 do
     local n = reversed and (count - 1 - i) or i
     local r, g, b, w = pixel(n, t, p)
-    if w == nil then w = 0 end
-    if type(r) ~= "number" or type(g) ~= "number" or type(b) ~= "number" or type(w) ~= "number" then
+    if type(r) ~= "number" or type(g) ~= "number" or type(b) ~= "number" or (w ~= nil and type(w) ~= "number") then
       error(BAD_RETURN, 0)
+    end
+    if w == nil then
+      w = 0
+      if rgbw then -- white extraction: the part common to r, g and b goes to the white chip
+        r, g, b = clamp(r), clamp(g), clamp(b)
+        w = math.min(r, g, b)
+        r, g, b = r - w, g - w, b - w
+      end
     end
     if rgbw then
       out[i + 1] = fmt(to_byte(r), to_byte(g), to_byte(b), to_byte(w))
