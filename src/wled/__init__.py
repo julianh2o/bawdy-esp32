@@ -3,7 +3,7 @@
 from wled.controller import WledController
 from wled.ddp import DDP_PORT, ddp_packets
 from wled.discovery import WledBrowser, probe
-from wled.models import BoardInfo, Channel, WledError, normalize_mac
+from wled.models import BoardInfo, Channel, Segment, WledError, normalize_mac
 from wled.transport import FakeTransport, UdpTransport
 
 __all__ = [
@@ -11,6 +11,7 @@ __all__ = [
     "Channel",
     "DDP_PORT",
     "FakeTransport",
+    "Segment",
     "UdpTransport",
     "WledBrowser",
     "WledController",

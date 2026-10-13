@@ -74,7 +74,7 @@ class RenderLoop:
                 if run is None:
                     continue
                 try:
-                    data = run.pattern.render(ch.length, now, entry.reversed(ch.index))
+                    data = run.pattern.render(ch.length, now, entry.reversed(ch.index), rgbw=ch.bytes_per_pixel == 4)
                     run.last_frames[target] = data
                     run.error = None
                 except PatternError as e:

@@ -180,7 +180,7 @@ function boardFor(c) {
 
 // ---------- identify ----------
 
-async function identify(ip, port, { ledCount, ledStart = 0, channel = null } = {}) {
+async function identify(ip, port, { ledCount, ledStart = 0, ranges, channel = null } = {}) {
   const key = `${ip}:${port}`;
   const current = S.identifying.get(key);
   const stopping = current && current.channel === channel;
@@ -190,6 +190,7 @@ async function identify(ip, port, { ledCount, ledStart = 0, channel = null } = {
       port,
       led_count: ledCount || undefined,
       led_start: ledStart || undefined,
+      ranges,
       seconds: IDENTIFY_SECONDS,
       stop: stopping || undefined,
     });
@@ -308,9 +309,20 @@ function renderChannel(c, ch, output, ip) {
     onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); },
   });
 
+  // Channels come from the board's segments; a Govee RGB + Govee White pair is one linked channel.
+  const segName = output ? (output.segment_name ?? output.name) : null;
+  const white = output?.white;
   const details = output
-    ? [output.pins?.length ? `GPIO ${output.pins.join(",")}` : null, `${output.length} LEDs`].filter(Boolean).join(" · ")
+    ? [
+        output.pins?.length ? `GPIO ${output.pins.join(",")}` : null,
+        white ? `${output.length} RGB + ${white.length} white LEDs` : `${output.length} LEDs`,
+        output.rgbw && !white ? "RGBW" : null,
+      ].filter(Boolean).join(" · ")
     : "no output on board";
+  if (segName && !white) nameInput.placeholder = `Name this channel (segment: ${segName})`;
+  const linkedTag = white
+    ? tag("linked", "", `Segments "${segName}" and its white segment are driven as one channel: the pattern's r, g, b go to the RGB LEDs, its w to the white LEDs`)
+    : null;
 
   const extra = !output
     ? el("button", {
@@ -318,7 +330,9 @@ function renderChannel(c, ch, output, ip) {
         title: "Forget this channel",
         onclick: () => { c.channels.splice(ch, 1); renderAll(); },
       }, "Remove")
-    : identifyButton(ip, c.port, { ledStart: output.start, ledCount: output.length, channel: ch });
+    : identifyButton(ip, c.port, white
+        ? { ranges: [[output.start, output.length], [white.start, white.length]], channel: ch }
+        : { ledStart: output.start, ledCount: output.length, channel: ch });
 
   // Stored only when true, so untouched channels stay {"name": ""} and get trimmed on save.
   const reversed = el("label", { class: "check small muted", title: "Pixel 0 is at the far end of the strip" },
@@ -337,6 +351,7 @@ function renderChannel(c, ch, output, ip) {
     el("div", { class: "channel-top" },
       el("span", { class: "channel-name" }, `Ch ${ch + 1}`),
       nameInput,
+      linkedTag,
       el("span", { class: "channel-stat" }, details),
       reversed,
       extra));

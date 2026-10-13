@@ -213,7 +213,10 @@ def _source(body: dict[str, Any]) -> str:
 
 
 def _identify(app: Lightd, body: dict[str, Any]) -> dict[str, Any]:
-    """Blink ``{target}``, ``{controller_id[, channel]}`` or ``{ip[, port, led_start, led_count]}``."""
+    """Blink ``{target}``, ``{controller_id[, channel]}`` or ``{ip[, port, led_start, led_count | ranges]}``.
+
+    ``ranges`` is ``[[start, count], ...]``, for channels that span more than one LED range (linked segments).
+    """
     seconds = float(body.get("seconds") or 6.0)
     channel: int | None = None
     if body.get("target"):
@@ -238,9 +241,15 @@ def _identify(app: Lightd, body: dict[str, Any]) -> dict[str, Any]:
     if body.get("stop"):
         controller.stop_identify()
         return {"status": "ok", "stopped": True}
+    ranges = body.get("ranges")
+    if ranges is not None:
+        try:
+            ranges = [(int(start), int(count)) for start, count in ranges]
+        except (TypeError, ValueError):
+            raise ApiError(400, "Expected 'ranges': [[start, count], ...]")
     controller.identify(
         channel=channel, seconds=seconds,
-        led_start=body.get("led_start"), led_count=body.get("led_count"),
+        led_start=body.get("led_start"), led_count=body.get("led_count"), ranges=ranges or None,
     )
     return {"status": "ok", "ip": controller.host, "port": controller.port, "via": "lightd"}
 

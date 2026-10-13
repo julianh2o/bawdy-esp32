@@ -7,7 +7,9 @@ from typing import Any
 
 from wled.ddp import DDP_PORT, ddp_packets
 from wled.http import WledHttp
-from wled.models import BoardInfo, Channel, WledError, channels_from_cfg, info_from_json
+from wled.models import (
+    BoardInfo, Channel, Segment, WledError, board_channels, info_from_json, outputs_from_cfg, segments_from_state,
+)
 from wled.transport import UdpTransport
 
 IDENTIFY_LEVEL = 200  # same value in every byte: looks alike whatever the color order; easy on the PSU
@@ -32,8 +34,9 @@ def _default_transport() -> UdpTransport:
 class WledController:
     """A WLED board reached at ``host`` (IP or hostname).
 
-    ``refresh()`` loads the board's info and channels over HTTP. Frames go out over DDP;
-    while ``identify()`` is blinking, ``send_frame``/``send_channels`` are ignored.
+    ``refresh()`` loads the board's info, LED outputs and segments over HTTP and builds its channels from them
+    (see ``wled.models``). Frames go out over DDP, as RGBW when any channel can show white; while ``identify()`` is
+    blinking, ``send_frame``/``send_channels`` are ignored.
     """
 
     def __init__(self, host: str, port: int = DDP_PORT, transport: Any = None, http: WledHttp | None = None) -> None:
@@ -43,6 +46,8 @@ class WledController:
         self.http = http or WledHttp(host)
         self.info: BoardInfo | None = None
         self.channels: list[Channel] | None = None
+        self.outputs: list[Channel] = []  # LED outputs (buses), as /json/cfg lists them
+        self.segments: list[Segment] = []
         self.last_refresh: float | None = None
         self.last_error: str | None = None
         self._seq = 0
@@ -64,16 +69,16 @@ class WledController:
         return f"WledController({self._host!r}, port={self.port})"
 
     def refresh(self) -> WledController:
-        """Load ``/json/info`` and the LED outputs from ``/json/cfg``. Raises ``WledError``."""
+        """Load ``/json/info``, the LED outputs from ``/json/cfg`` and the segments from ``/json/state``.
+        Raises ``WledError``."""
         try:
             info = info_from_json(self.http.info())
-            channels = channels_from_cfg(self.http.cfg())
+            cfg, state = self.http.cfg(), self.http.state()
         except WledError as e:
             self.last_error = str(e)
             raise
-        if not channels and info.led_count:
-            channels = [Channel(index=0, start=0, length=info.led_count)]  # firmware without hw.led.ins
-        self.info, self.channels = info, channels
+        self.outputs, self.segments = outputs_from_cfg(cfg), segments_from_state(state)
+        self.info, self.channels = info, board_channels(cfg, state, info.led_count)
         self.last_refresh = time.time()
         self.last_error = None
         return self
@@ -82,7 +87,7 @@ class WledController:
     def pixel_count(self) -> int:
         """LEDs addressed by the channels (end of the last one)."""
         if self.channels:
-            return max(c.start + c.length for c in self.channels)
+            return max(c.end for c in self.channels)
         return self.info.led_count if self.info else 0
 
     def channel(self, index: int) -> Channel:
@@ -96,9 +101,10 @@ class WledController:
         self._seq = self._seq % 15 + 1
         return self._seq
 
-    def _send(self, data: bytes, offset_leds: int = 0) -> None:
+    def _send(self, data: bytes, offset_leds: int = 0, rgbw: bool = False) -> None:
+        bpp = 4 if rgbw else 3
         with self._send_lock:
-            self.transport.send(self._host, self.port, ddp_packets(data, self._next_seq(), offset=offset_leds * 3))
+            self.transport.send(self._host, self.port, ddp_packets(data, self._next_seq(), offset=offset_leds * bpp, rgbw=rgbw))
 
     @property
     def identifying(self) -> bool:
@@ -110,20 +116,38 @@ class WledController:
             self._send(rgb, start_led)
 
     def send_channels(self, buffers: dict[int, bytes]) -> None:
-        """Send one frame covering every channel: given channels get their RGB bytes, the rest black.
+        """Send one frame covering every channel: given channels get their pixels, the rest black.
 
-        Requires ``channels`` (call ``refresh()`` first). Buffers are cut or zero-padded to each
-        channel's length; RGBW outputs get W = 0 (WLED fills W from RGB per its own settings).
+        Requires ``channels`` (call ``refresh()`` first). Each buffer has ``ch.bytes_per_pixel`` bytes per pixel:
+        r, g, b for RGB channels; r, g, b, w for RGBW and linked ones. Buffers are cut or zero-padded to the
+        channel's length. A linked channel's r, g, b go to its RGB LEDs and its w, spread over the white LEDs, to
+        every byte of those. The frame goes out as RGBW when any channel can show white, else as RGB.
         """
         if self.channels is None:
             raise WledError(f"{self._host}: channels unknown, call refresh() first")
-        frame = bytearray(self.pixel_count * 3)
+        bpp = max((ch.bytes_per_pixel for ch in self.channels), default=3)
+        frame = bytearray(self.pixel_count * bpp)
         for ch in self.channels:
             data = buffers.get(ch.index)
-            if data:
-                n = min(len(data), ch.length * 3)
-                frame[ch.start * 3: ch.start * 3 + n] = data[:n]
-        self.send_frame(bytes(frame))
+            if not data:
+                continue
+            cb = ch.bytes_per_pixel
+            n = min(len(data) // cb, ch.length)
+            data = data[:n * cb]
+            if cb == bpp:
+                px = bytearray(data)
+                if ch.linked:
+                    px[3::4] = bytes(n)  # w belongs to the white LEDs
+            else:  # RGB channel in an RGBW frame
+                px = bytearray(n * 4)
+                for k in range(3):
+                    px[k::4] = data[k::3]
+            frame[ch.start * bpp: ch.start * bpp + len(px)] = px
+            if ch.linked:
+                levels = _spread(data[3::4], ch.white_length)
+                frame[ch.white_start * 4: (ch.white_start + len(levels)) * 4] = bytes(v for v in levels for _ in range(4))
+        if not self.identifying:
+            self._send(bytes(frame), rgbw=bpp == 4)
 
     def blackout(self) -> None:
         count = self.pixel_count or FALLBACK_LED_COUNT
@@ -137,32 +161,40 @@ class WledController:
         seconds: float = DEFAULT_IDENTIFY_SECONDS,
         led_start: int | None = None,
         led_count: int | None = None,
+        ranges: list[tuple[int, int]] | None = None,
     ) -> None:
-        """Blink the whole board, one channel (0-based), or an LED range, in a background thread.
+        """Blink the whole board, one channel (0-based, every LED range it covers), an LED range, or several
+        ``ranges`` of ``(start, count)``, in a background thread.
 
         Other LEDs stay dark. Normal frames are ignored until the blink ends with a black frame.
         """
         if channel is not None:
-            ch = self.channel(channel)
-            led_start, led_count = ch.start, ch.length
-        start = max(0, min(MAX_LEDS - 1, int(led_start or 0)))
-        count = int(led_count or (self.pixel_count - start if self.pixel_count > start else FALLBACK_LED_COUNT))
-        count = max(1, min(MAX_LEDS - start, count))
+            ranges = self.channel(channel).ranges
+        elif not ranges:
+            start = int(led_start or 0)
+            ranges = [(start, led_count or (self.pixel_count - start if self.pixel_count > start else FALLBACK_LED_COUNT))]
+        clean = []
+        for start, count in ranges:
+            start = max(0, min(MAX_LEDS - 1, int(start)))
+            clean.append((start, max(1, min(MAX_LEDS - start, int(count)))))
         seconds = max(0.5, min(60.0, float(seconds)))
 
         self.stop_identify()
         stop = threading.Event()
         self._identify_stop = stop
         threading.Thread(
-            target=self._blink, args=(start, count, seconds, stop), daemon=True, name=f"Identify-{self._host}",
+            target=self._blink, args=(clean, seconds, stop), daemon=True, name=f"Identify-{self._host}",
         ).start()
 
     def stop_identify(self) -> None:
         if self._identify_stop is not None:
             self._identify_stop.set()
 
-    def _blink(self, start: int, count: int, seconds: float, stop: threading.Event) -> None:
-        on = bytes(start * 3) + bytes([IDENTIFY_LEVEL]) * (count * 3)
+    def _blink(self, ranges: list[tuple[int, int]], seconds: float, stop: threading.Event) -> None:
+        on = bytearray(max(s + n for s, n in ranges) * 3)
+        for start, count in ranges:
+            on[start * 3: (start + count) * 3] = bytes([IDENTIFY_LEVEL]) * (count * 3)
+        on = bytes(on)
         off = bytes(len(on))
         began = time.monotonic()
         while not stop.is_set() and time.monotonic() - began < seconds:
@@ -186,3 +218,16 @@ class WledController:
     def release(self) -> None:
         """Leave realtime mode now, so the board shows its own effects (instead of waiting for its timeout)."""
         self.http.set_state(live=False)
+
+
+def _spread(levels: bytes, count: int) -> bytes:
+    """``levels`` resampled to ``count`` values, each the mean of the source values it covers."""
+    n = len(levels)
+    if n == count or not n:
+        return levels if n else bytes(count)
+    out = bytearray(count)
+    for j in range(count):
+        a = j * n // count
+        b = max(a + 1, (j + 1) * n // count)
+        out[j] = round(sum(levels[a:b]) / (b - a))
+    return bytes(out)

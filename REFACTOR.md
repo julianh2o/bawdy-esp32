@@ -42,7 +42,7 @@ Defaults chosen for the open items: port 8765, user patterns in `config/patterns
 | Daemon package | `lightd` |
 | `wled` API style | Synchronous methods; discovery runs in a background thread with callbacks |
 | Pattern language | Lua 5.4 via [`lupa`](https://pypi.org/project/lupa/) |
-| Pattern signature | `pixel(n, t, p)` returns `r, g, b`. There are no x/y coordinates |
+| Pattern signature | `pixel(n, t, p)` returns `r, g, b` and optionally `w` (white). There are no x/y coordinates |
 | `n` | 0-based pixel index within the target channel. Flipped for channels marked `reversed` |
 | Target length | Available to the pattern as the global `COUNT` |
 | `t` | Unix time in seconds, so every channel and run is in phase and patterns can tell the time |
@@ -60,8 +60,9 @@ Defaults chosen for the open items: port 8765, user patterns in `config/patterns
 | Starting a run on a busy channel | The new run replaces the old one instantly (cut) |
 | Idle channels | Sent black |
 | Brightness / gamma | Per-channel brightness (0..1) in `lightd`, applied after rendering and kept across runs; gamma left to WLED |
-| RGBW outputs | Sent as RGB with W = 0 |
-| Channel layout | Read live from the board (`/json/cfg`). A board that can't be read gets no output |
+| RGBW outputs | A board with any white-capable channel gets RGBW DDP frames (data type 0x1A): RGBW strips get the pattern's `w`; RGB-only channels get `w` added to r, g, b |
+| Channel layout | Read live from the board: one channel per WLED segment (`/json/state`), or per LED output (`/json/cfg`) if there are no segments. A board that can't be read gets no output |
+| Govee lights | Segments named "Govee RGB" and "Govee White" (same suffix, if any) are one linked channel: r, g, b go to the RGB LEDs, `w` (averaged to fit) to every byte of the white LEDs |
 | Offline boards / IP changes | `lightd` runs mDNS discovery and follows boards by MAC/host |
 | Restart behaviour | Active runs and channel brightness are saved and restored on start |
 | Scenes | Named sets of `{targets, pattern, params, brightness?}` in `config/scenes.json`; activating one starts every entry and leaves other channels alone |
@@ -84,10 +85,13 @@ Knows about WLED boards and nothing about patterns, runs or config files.
   gone. `probe(ip)` reaches boards on other subnets.
 - **`WledController`** is built from an IP/host or a discovery result. It loads:
   - from `/json/info`: name, MAC, version, arch, total LED count
-  - **channels** from `/json/cfg` `hw.led.ins`: index, start LED, length, GPIO pins, color order, RGB/RGBW
+  - LED outputs from `/json/cfg` `hw.led.ins`: start LED, length, GPIO pins, color order, RGB/RGBW
+  - segments from `/json/state` `seg`; **channels** are the segments (pins/order/RGBW from the output each starts
+    in), with Govee RGB + White pairs linked into one channel; without segments, the LED outputs
 - **Output**: DDP over UDP 4048, at most 480 px per packet, with the push flag on the last packet.
   - `send_frame(bytes)` sends the whole board.
-  - `send_channels({index: rgb_bytes})` places each channel at its start LED and pads RGBW outputs with W = 0.
+  - `send_channels({index: pixel_bytes})` places each channel at its start LED. Buffers are RGB, or RGBW for
+    channels with `bytes_per_pixel == 4` (RGBW strips, linked Govee channels).
 - **Low-level tasks**:
   - identify (blink the whole board or one channel)
   - JSON API state (on/off, brightness, leave realtime mode)
@@ -211,7 +215,8 @@ function pixel(n, t, p)
 end
 ```
 
-- **Contract**: `pixel(n, t, p)` returns `r, g, b` floats in 0..1.
+- **Contract**: `pixel(n, t, p)` returns `r, g, b` floats in 0..1, plus an optional `w` (white) that lights white
+  LEDs where the channel has them and is added to `r, g, b` where it doesn't.
   - `n` runs `0..COUNT-1` along the channel and is flipped when the channel is `reversed`.
   - `COUNT` is a global set per target.
   - `t` is Unix time in seconds (wall clock), the same for every channel and run.

@@ -49,7 +49,8 @@ class ControllerEntry:
                 "name": cfg.get("name", ""),
                 "reversed": bool(cfg.get("reversed")),
                 "on_board": ch is not None,
-                **({k: v for k, v in ch.to_dict().items() if k != "index"} if ch else {"length": None}),
+                **({k: v for k, v in ch.to_dict().items() if k not in ("index", "name")} if ch else {"length": None}),
+                "segment_name": ch.name if ch else None,
             })
         return {
             "id": self.id,

@@ -20,7 +20,9 @@ from lightd.registry import Registry
 from lightd.runs import RunManager
 from lightd.scenes import SceneError, SceneStore, is_active
 from lightd.targets import Target, TargetError, parse_targets
-from test_wled import FakeHttp, payloads
+from test_wled import CFG, GOVEE_CFG, GOVEE_STATE, FakeHttp, payloads
+
+RGB_CFG = {"hw": {"led": {"ins": [dict(o, type=22) for o in CFG["hw"]["led"]["ins"]]}}}
 
 REPO = Path(__file__).resolve().parent.parent
 RED = "function pixel(n, t, p) return 1, 0, 0 end"
@@ -101,6 +103,14 @@ class TestLua(unittest.TestCase):
         p = Pattern("function pixel(n, t, p) return n / (COUNT - 1), 0, t end")
         self.assertEqual(p.render(3, 1.0), bytes([0, 0, 255, 128, 0, 255, 255, 0, 255]))
         self.assertEqual(p.render(3, 0.0, reversed=True)[::3], bytes([255, 128, 0]))
+
+    def test_w_is_optional_and_added_to_rgb_unless_rgbw(self):
+        p = Pattern("function pixel(n, t, p) return 0.2, 0, 0, n == 1 and 0.5 or nil end")
+        self.assertEqual(p.render(2, 0), bytes([51, 0, 0, 179, 128, 128]))
+        self.assertEqual(p.render(2, 0, rgbw=True), bytes([51, 0, 0, 0, 51, 0, 0, 128]))
+        with self.assertRaises(PatternError) as cm:
+            Pattern("function pixel(n, t, p) return 1, 0, 0, 'x' end").render(1, 0)
+        self.assertIn("optionally w", str(cm.exception))
 
     def test_params_schema_and_coercion(self):
         p = Pattern('params = { speed = { type = "number", default = 2, min = 0, max = 5 }, c = "#ff0000" }\n' + RED)
@@ -184,10 +194,12 @@ class TestLibrary(unittest.TestCase):
             self.lib.delete("rainbow")
 
 
-def make_registry(tmp: Path, controllers: dict, transport: FakeTransport, fail: bool = False) -> Registry:
+def make_registry(tmp: Path, controllers: dict, transport: FakeTransport, fail: bool = False, **http) -> Registry:
+    """Every board gets 3 RGB channels of 270 LEDs unless ``http`` says otherwise (cfg=..., state=...)."""
     path = tmp / "controllers.json"
     path.write_text(json.dumps(controllers))
-    factory = lambda ip, port, transport: WledController(ip, port=port, transport=transport, http=FakeHttp(fail=fail))
+    http.setdefault("cfg", RGB_CFG)
+    factory = lambda ip, port, transport: WledController(ip, port=port, transport=transport, http=FakeHttp(fail=fail, **http))
     reg = Registry(ControllerStore(path), transport=transport, controller_factory=factory)
     reg.load()
     for e in reg.entries():
@@ -286,6 +298,22 @@ class TestLoop(RunsTest):
         self.tx.clear()
         self.loop.step()
         self.assertEqual(payloads(self.tx.sent)[:270 * 3], bytes(270 * 3))
+
+    def test_rgbw_and_linked_govee_channels_get_w(self):
+        tx = FakeTransport()
+        reg = make_registry(self.dir, {"g": {"ip": "10.0.0.2"}}, tx, cfg=GOVEE_CFG, state=GOVEE_STATE)
+        loop = RenderLoop(reg, self.runs)
+        self.runs.start(["g/1"], source="function pixel(n, t, p) return 1, 0, 0, 0.5 end")
+        loop.step()
+        frame = payloads(tx.sent)
+        self.assertEqual(frame, b"\xff\x00\x00\x00" * 10 + b"\x80" * 8)  # RGB LEDs, then the white LEDs
+        tx.clear()
+        reg = make_registry(self.dir, {"r": {"ip": "10.0.0.3"}}, tx, cfg=CFG)  # channel 3 is RGBW
+        self.runs.start(["r/1", "r/3"], source="function pixel(n, t, p) return 1, 0, 0, 0.5 end")
+        RenderLoop(reg, self.runs).step()
+        frame = payloads(tx.sent)
+        self.assertEqual(frame[:4], b"\xff\x80\x80\x00")  # RGB channel: w added to r, g, b
+        self.assertEqual(frame[540 * 4:540 * 4 + 4], b"\xff\x00\x00\x80")
 
     def test_output_off_sends_nothing_and_releases_boards(self):
         self.runs.start(["a/1"], source=RED)
@@ -417,6 +445,7 @@ class TestApi(RunsTest):
         self.assertEqual([ch["target"] for ch in c["channels"]], ["a/1", "a/2", "a/3"])
         self.assertEqual(c["channels"][1]["reversed"], True)
         self.assertEqual(c["channels"][0]["length"], 270)
+        self.assertEqual((c["channels"][0]["linked"], c["channels"][0]["segment_name"]), (False, None))
 
     def test_run_lifecycle(self):
         status, run = self.call("POST", "/api/runs", {"targets": ["a/1"], "pattern": "chase", "params": {"width": 3}})
@@ -456,6 +485,10 @@ class TestApi(RunsTest):
         self.assertEqual(status, 200, res)
         self.assertTrue(self.registry.get("a").controller.identifying)
         self.call("POST", "/api/identify", {"target": "a/2", "stop": True})
+        status, res = self.call("POST", "/api/identify", {"ip": "10.0.0.1", "ranges": [[0, 4], [10, 2]], "seconds": 0.5})
+        self.assertEqual(status, 200, res)
+        self.call("POST", "/api/identify", {"ip": "10.0.0.1", "stop": True})
+        self.assertEqual(self.call("POST", "/api/identify", {"ip": "10.0.0.1", "ranges": [[0]]})[0], 400)
 
     def test_config_get_put_and_reload(self):
         status, res = self.call("GET", "/api/config")

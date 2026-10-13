@@ -21,7 +21,8 @@ const SAVE_ICON = `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="
 
 const TEMPLATE = `-- pixel(n, t, p) runs for every pixel, every frame.
 --   n: pixel number, 0 .. COUNT - 1      t: Unix time in seconds (the same on every channel)
---   p: params (declared below)           return r, g, b in 0 .. 1
+--   p: params (declared below)           return r, g, b in 0 .. 1, and optionally w (white)
+--   w lights white LEDs (RGBW strips, linked Govee white); on RGB-only LEDs it's added to r, g, b
 -- Helpers: hsv(h, s, v), mix(a, b, k), clamp(x, lo, hi), noise(x, y), hash(n, seed), color("#rrggbb")
 
 params = {
@@ -439,10 +440,10 @@ function renderTargets() {
                   updateButtons();
                 },
               }),
-              el("span", {}, ch.name || `Ch ${ch.number}`),
+              el("span", {}, ch.name || ch.segment_name || `Ch ${ch.number}`),
               run ? el("span", { class: "busy", title: "Playing now" }, `▶ ${run.pattern || "editor"}`) : null,
               el("span", { class: "meta" }, usable
-                ? `${ch.length} px${ch.reversed ? " · rev" : ""}${ch.brightness < 1 ? ` · ${Math.round(ch.brightness * 100)}%` : ""}`
+                ? `${ch.length} px${ch.linked ? " + white" : ch.rgbw ? " · RGBW" : ""}${ch.reversed ? " · rev" : ""}${ch.brightness < 1 ? ` · ${Math.round(ch.brightness * 100)}%` : ""}`
                 : "not on board"));
           })
         : el("div", { class: "muted small" }, c.online ? "No LED outputs reported." : "Channels appear once the board is reachable."))));

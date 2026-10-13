@@ -10,19 +10,24 @@ import time
 from typing import Any, Callable
 
 from wled.http import WledHttp
-from wled.models import WledError, channels_from_cfg, info_from_json
+from wled.models import WledError, board_channels, info_from_json
 
 WLED_SERVICE_TYPE = "_wled._tcp.local."
 
 
 def probe(host: str, timeout: float = 2.0) -> dict[str, Any]:
-    """Board info plus its channels (``None`` if ``/json/cfg`` is unreadable). Raises ``WledError``."""
+    """Board info plus its channels (``None`` if neither ``/json/cfg`` nor ``/json/state`` is readable).
+    Raises ``WledError``."""
     http = WledHttp(host, timeout=timeout)
     info = info_from_json(http.info())
-    try:
-        channels = [c.to_dict() for c in channels_from_cfg(http.cfg())]
-    except WledError:
-        channels = None  # older firmware or a settings PIN
+    docs = []
+    for read in (http.cfg, http.state):
+        try:
+            docs.append(read())
+        except WledError:
+            docs.append(None)  # older firmware or a settings PIN
+    cfg, state = docs
+    channels = None if cfg is None and state is None else [c.to_dict() for c in board_channels(cfg, state, info.led_count)]
     return {**info.to_dict(), "channels": channels}
 
 

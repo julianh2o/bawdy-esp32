@@ -3,7 +3,9 @@
 --
 -- A pattern is Lua source that defines:
 --   params = { speed = { type = "number", default = 1, min = 0, max = 5 }, ... }   -- optional
---   function pixel(n, t, p) return r, g, b end   -- n: 0..COUNT-1, t: Unix time in seconds, r/g/b: 0..1
+--   function pixel(n, t, p) return r, g, b, w end   -- n: 0..COUNT-1, t: Unix time in seconds, r/g/b/w: 0..1
+-- w (white) is optional. LEDs with a white chip (RGBW strips, linked Govee white segments) show it as white;
+-- on RGB-only LEDs it's added to r, g and b.
 
 local M = {}
 
@@ -175,34 +177,45 @@ end
 
 -- ---------- rendering ----------
 
+local BAD_RETURN = "pixel() must return numbers r, g, b and optionally w (0..1)"
+
 local function to_byte(v)
-  if type(v) ~= "number" then error("pixel() must return three numbers r, g, b (0..1)", 0) end
   if v ~= v or v <= 0 then return 0 elseif v >= 1 then return 255 end
   return floor(v * 255 + 0.5)
 end
 
 local function hex3(r, g, b) return format("%02x%02x%02x", r, g, b) end
+local function hex4(r, g, b, w) return format("%02x%02x%02x%02x", r, g, b, w) end
 
-local function loop(env, count, t, p, reversed, fmt)
+local function loop(env, count, t, p, reversed, rgbw, fmt)
   env.COUNT = count
   local pixel = env.pixel
   local out = {}
   for i = 0, count - 1 do
     local n = reversed and (count - 1 - i) or i
-    local r, g, b = pixel(n, t, p)
-    out[i + 1] = fmt(to_byte(r), to_byte(g), to_byte(b))
+    local r, g, b, w = pixel(n, t, p)
+    if w == nil then w = 0 end
+    if type(r) ~= "number" or type(g) ~= "number" or type(b) ~= "number" or type(w) ~= "number" then
+      error(BAD_RETURN, 0)
+    end
+    if rgbw then
+      out[i + 1] = fmt(to_byte(r), to_byte(g), to_byte(b), to_byte(w))
+    else
+      out[i + 1] = fmt(to_byte(r + w), to_byte(g + w), to_byte(b + w))
+    end
   end
   return concat(out)
 end
 
--- One channel's frame as a byte string (3 bytes per pixel): returns true, data or false, error.
-function M.render(env, count, t, p, reversed)
-  return budgeted(loop, env, count, t, p, reversed, char)
+-- One channel's frame as a byte string: returns true, data or false, error.
+-- 3 bytes per pixel (r, g, b with w added in), or 4 (r, g, b, w) when rgbw is true.
+function M.render(env, count, t, p, reversed, rgbw)
+  return budgeted(loop, env, count, t, p, reversed, rgbw, char)
 end
 
--- Same, as a hex string ("rrggbb" per pixel); used by the browser, which can't take binary strings.
-function M.render_hex(env, count, t, p, reversed)
-  return budgeted(loop, env, count, t, p, reversed, hex3)
+-- Same, as a hex string ("rrggbb" or "rrggbbww" per pixel); used by the browser, which can't take binary strings.
+function M.render_hex(env, count, t, p, reversed, rgbw)
+  return budgeted(loop, env, count, t, p, reversed, rgbw, rgbw and hex4 or hex3)
 end
 
 return M

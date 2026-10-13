@@ -78,9 +78,9 @@ class Pattern:
         """The p table the pattern currently sees."""
         return _from_lua(self._p) or {}
 
-    def render(self, count: int, t: float, reversed: bool = False) -> bytes:
-        """``count`` pixels as RGB bytes. Raises ``PatternError``."""
-        ok, data = self._rt[b"render"](self._env, int(count), float(t), self._p, bool(reversed))
+    def render(self, count: int, t: float, reversed: bool = False, rgbw: bool = False) -> bytes:
+        """``count`` pixels as RGB bytes (w added to r, g, b), or RGBW bytes. Raises ``PatternError``."""
+        ok, data = self._rt[b"render"](self._env, int(count), float(t), self._p, bool(reversed), bool(rgbw))
         if not ok:
             raise PatternError(_from_lua(data) or "render failed")
         return data
