@@ -33,3 +33,4 @@ data/devices/
 # Deployment config
 .env
 config/*.json
+config/patterns/

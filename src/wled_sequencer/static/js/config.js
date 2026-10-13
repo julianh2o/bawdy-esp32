@@ -1,25 +1,28 @@
 /**
  * Lighting setup page (/config): adopted controllers with their channels, plus discovery.
  *
- * Edits stay in a local draft until "Save & apply", which writes controllers.json and has the
- * daemon reload it. A channel is one of the board's LED outputs; its name is stored in
- * controllers.json as {"channels": [{"name": ...}, ...]} in output order.
+ * lightd owns the configuration: everything here goes through its REST API (via the web
+ * server's /engine/* proxy). Edits stay in a local draft until "Save & apply", which sends
+ * controllers.json to lightd (PUT /api/config); lightd validates, saves and applies it.
+ * A channel is one of the board's LED outputs; its name is stored as
+ * {"channels": [{"name": ...}, ...]} in output order.
  */
 
+const API = "/engine/api";
 const POLL_MS = 3000;
-const DAEMON_POLL_MS = 5000;
+const STATUS_POLL_MS = 5000;
 const IDENTIFY_SECONDS = 6;
 const ID_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 
 const S = {
-  meta: null, // last GET /api/config (paths, writable flags, errors)
+  meta: null, // last GET /api/config: {path, writable, error, controllers}
   original: {}, // controllers as loaded, for Revert
   controllers: [], // [{key, id, ip, port, channels: [{name, ...}], extra}]
   saved: "",
-  discovery: { nodes: [] },
+  live: [], // GET /api/controllers: what lightd knows about each saved controller's board
+  discovery: { boards: [] },
   open: new Set(), // controller keys whose channels are expanded
   identifying: new Map(), // "ip:port" -> {timer, channel}
-  probed: new Set(),
 };
 let nextKey = 1;
 
@@ -80,8 +83,8 @@ function banner(message, kind = "") {
   b.replaceChildren(...(Array.isArray(message) ? message : [message]));
 }
 
-async function api(method, url, body) {
-  const resp = await fetch(url, {
+async function api(method, path, body) {
+  const resp = await fetch(API + path, {
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
@@ -127,7 +130,7 @@ const isDirty = () => canonical(controllersToFile()) !== S.saved;
 // ---------- board matching ----------
 
 function nodeForController(c) {
-  const nodes = S.discovery.nodes || [];
+  const nodes = S.discovery.boards || [];
   const mac = normMac(c.extra.mac);
   const host = (c.extra.host || "").toLowerCase();
   const byIdentity =
@@ -149,6 +152,32 @@ function controllerForNode(n) {
   );
 }
 
+// What's known about a draft controller's board: lightd's live view when the controller is saved
+// with this IP, otherwise whatever discovery found. channels: [{start, length, pins}] or [].
+function boardFor(c) {
+  const live = S.live.find((l) => l.id === c.id.trim() && l.configured_ip === c.ip.trim() && l.port === Number(c.port));
+  if (live) {
+    return {
+      known: live.online || !!live.board,
+      online: live.online,
+      error: live.error,
+      ledCount: live.board?.led_count,
+      channels: live.channels.filter((ch) => ch.on_board),
+      moved: live.ip !== live.configured_ip ? live.ip : null,
+    };
+  }
+  const { node, moved } = nodeForController(c);
+  const info = node?.info || {};
+  return {
+    known: !!node,
+    online: !!node?.online,
+    error: node?.probe_error,
+    ledCount: info.led_count,
+    channels: info.channels || [],
+    moved,
+  };
+}
+
 // ---------- identify ----------
 
 async function identify(ip, port, { ledCount, ledStart = 0, channel = null } = {}) {
@@ -156,7 +185,7 @@ async function identify(ip, port, { ledCount, ledStart = 0, channel = null } = {
   const current = S.identifying.get(key);
   const stopping = current && current.channel === channel;
   try {
-    const res = await api("POST", "/api/config/identify", {
+    await api("POST", "/identify", {
       ip,
       port,
       led_count: ledCount || undefined,
@@ -169,7 +198,6 @@ async function identify(ip, port, { ledCount, ledStart = 0, channel = null } = {
     if (!stopping) {
       const timer = setTimeout(() => { S.identifying.delete(key); renderControllers(); renderDiscovery(); }, IDENTIFY_SECONDS * 1000);
       S.identifying.set(key, { timer, channel });
-      if (res.via === "direct") banner(`Daemon not reachable, so the web server is blinking ${ip} directly.`);
     }
   } catch (e) {
     banner(`Identify failed: ${e.message}`, "err");
@@ -195,7 +223,8 @@ function identifyButton(ip, port, opts = {}) {
 
 function renderControllers() {
   const list = $("controllers-list");
-  if (list.contains(document.activeElement)) return; // don't clobber a field being typed in
+  const typing = list.contains(document.activeElement) && document.activeElement.matches("input[type=text]");
+  if (typing) return; // don't clobber a name being typed
   list.replaceChildren(
     ...(S.controllers.length
       ? S.controllers.map(renderControllerCard)
@@ -204,24 +233,24 @@ function renderControllers() {
 }
 
 function renderControllerCard(c) {
-  const { node, moved } = nodeForController(c);
-  const info = node?.info || {};
-  const outputs = info.outputs || [];
+  const board = boardFor(c);
+  const { moved } = board;
+  const outputs = board.channels;
   const open = S.open.has(c.key);
   const ip = c.ip.trim();
 
   let status;
   if (moved) status = el("span", { class: "pill warn", title: `This board now answers at ${moved}` }, `moved to ${moved}`);
-  else if (node?.online) status = el("span", { class: "pill ok" }, "online");
-  else if (node) status = el("span", { class: "pill warn" }, "offline");
-  else status = el("span", { class: "pill" }, "not seen");
+  else if (board.online) status = el("span", { class: "pill ok" }, "online");
+  else if (board.known) status = el("span", { class: "pill warn", title: board.error || "" }, "offline");
+  else status = el("span", { class: "pill", title: board.error || "" }, "not seen");
 
   const count = Math.max(outputs.length, c.channels.length);
   const named = c.channels.filter((ch) => ch.name.trim()).length;
   const meta = [
     ip || "no IP",
     c.extra.name,
-    info.led_count ? `${info.led_count} LEDs` : null,
+    board.ledCount ? `${board.ledCount} LEDs` : null,
     count ? `${plural(count, "channel")}${named ? `, ${named} named` : ""}` : null,
   ].filter(Boolean).join(" · ");
 
@@ -232,7 +261,7 @@ function renderControllerCard(c) {
       el("div", { class: "ctrl-meta" }, meta)),
     el("span", { class: "spacer" }),
     status,
-    identifyButton(ip, c.port, { ledCount: info.led_count }),
+    identifyButton(ip, c.port, { ledCount: board.ledCount }),
     el("button", { class: "btn btn-small btn-ghost", title: "Edit controller", onclick: (e) => { e.stopPropagation(); openControllerDialog({ mode: "edit", controller: c }); } }, "Edit"),
   );
 
@@ -244,7 +273,7 @@ function renderControllerCard(c) {
   }
   if (!outputs.length) {
     notes.push(el("div", { class: "ctrl-note muted" },
-      node ? "The board didn't report its LED outputs." : "Board not seen yet, so its LED outputs are unknown."));
+      board.online ? "The board didn't report its LED outputs." : "Board not reachable yet, so its LED outputs are unknown."));
   } else if (c.channels.length > outputs.length) {
     notes.push(el("div", { class: "ctrl-note" },
       tag("board", "warn"), `The board now has ${plural(outputs.length, "output")}; ${c.channels.length - outputs.length} named channel(s) have no output.`));
@@ -280,7 +309,7 @@ function renderChannel(c, ch, output, ip) {
   });
 
   const details = output
-    ? [output.pins?.length ? `GPIO ${output.pins.join(",")}` : null, `${output.len} LEDs`].filter(Boolean).join(" · ")
+    ? [output.pins?.length ? `GPIO ${output.pins.join(",")}` : null, `${output.length} LEDs`].filter(Boolean).join(" · ")
     : "no output on board";
 
   const extra = !output
@@ -289,13 +318,27 @@ function renderChannel(c, ch, output, ip) {
         title: "Forget this channel",
         onclick: () => { c.channels.splice(ch, 1); renderAll(); },
       }, "Remove")
-    : identifyButton(ip, c.port, { ledStart: output.start, ledCount: output.len, channel: ch });
+    : identifyButton(ip, c.port, { ledStart: output.start, ledCount: output.length, channel: ch });
+
+  // Stored only when true, so untouched channels stay {"name": ""} and get trimmed on save.
+  const reversed = el("label", { class: "check small muted", title: "Pixel 0 is at the far end of the strip" },
+    el("input", {
+      type: "checkbox",
+      checked: !!entry.reversed,
+      onchange: (e) => {
+        if (e.target.checked) entry.reversed = true;
+        else delete entry.reversed;
+        renderHeader();
+      },
+    }),
+    "Reversed");
 
   return el("div", { class: "channel" },
     el("div", { class: "channel-top" },
       el("span", { class: "channel-name" }, `Ch ${ch + 1}`),
       nameInput,
       el("span", { class: "channel-stat" }, details),
+      reversed,
       extra));
 }
 
@@ -303,7 +346,7 @@ function renderChannel(c, ch, output, ip) {
 
 function renderDiscovery() {
   const d = S.discovery;
-  const unadopted = (d.nodes || []).filter((n) => !controllerForNode(n));
+  const unadopted = (d.boards || []).filter((n) => !controllerForNode(n));
   const summary = $("discovery-summary");
   if (!d.enabled) summary.textContent = "Discovery is off. Add boards by IP";
   else if (unadopted.length) summary.textContent = `${plural(unadopted.length, "unadopted board")} discovered`;
@@ -318,7 +361,7 @@ function renderDiscovery() {
     ...(unadopted.length
       ? unadopted.map((n) => {
           const info = n.info || {};
-          const outputs = info.outputs || [];
+          const outputs = info.channels || [];
           let st;
           if (!n.online && n.source === "mdns") st = tag("offline", "warn");
           else if (n.probe_error && !n.info) st = tag("no HTTP answer", "warn", n.probe_error);
@@ -341,10 +384,10 @@ function renderDiscovery() {
 function renderHeader() {
   const dirty = isDirty();
   $("dirty-indicator").textContent = dirty ? "Unsaved changes" : "";
-  $("save-btn").disabled = !dirty || !S.meta?.controllers?.writable;
+  $("save-btn").disabled = !dirty || !S.meta?.writable;
   $("revert-btn").disabled = !dirty;
-  const path = S.meta?.controllers?.path;
-  $("file-paths").textContent = path ? `Controllers: ${path}` : "";
+  const path = S.meta?.path;
+  $("file-paths").textContent = path ? `Controllers (managed by lightd): ${path}` : "";
 }
 
 function renderAll() {
@@ -437,19 +480,23 @@ function initControllerDialog() {
 
 // ---------- load / save / polling ----------
 
-async function load() {
-  const meta = await api("GET", "/api/config");
-  S.meta = meta;
-  S.original = meta.controllers.controllers || {};
-  resetDraft();
-  if (meta.controllers.error) banner(meta.controllers.error, "err");
-  else if (meta.controllers.path && !meta.controllers.writable) {
+function showConfigProblems(meta) {
+  if (meta.error) banner(`lightd can't read ${meta.path}: ${meta.error}`, "err");
+  else if (!meta.writable) {
     banner([
-      "This server can't write ", el("code", {}, meta.controllers.path),
-      ". Under Docker the web container runs as uid 10001: make it writable, e.g. ",
-      el("code", {}, "chmod a+w config/controllers.json"), ".",
+      "lightd can't write ", el("code", {}, meta.path),
+      ". Under Docker it runs as uid 10001: make the config directory writable, e.g. ",
+      el("code", {}, "sudo chown -R 10001 config"), ".",
     ], "err");
   }
+}
+
+async function load() {
+  const meta = await api("GET", "/config");
+  S.meta = meta;
+  S.original = meta.controllers || {};
+  resetDraft();
+  showConfigProblems(meta);
 }
 
 function resetDraft() {
@@ -461,58 +508,55 @@ function resetDraft() {
 async function save() {
   $("save-btn").disabled = true;
   try {
-    const res = await api("PUT", "/api/config", { controllers: controllersToFile() });
-    if (res.controllers) S.original = res.controllers;
+    const res = await api("PUT", "/config", { controllers: controllersToFile() });
+    S.meta = res;
+    S.original = res.controllers;
     const openIds = new Set(S.controllers.filter((c) => S.open.has(c.key)).map((c) => c.id.trim()));
     resetDraft();
     S.open = new Set(S.controllers.filter((c) => openIds.has(c.id)).map((c) => c.key));
+    banner("Saved and applied.", "ok");
+    await pollLive();
     renderAll();
-    const reload = res.reload || {};
-    if (reload.ok) {
-      banner("Saved and applied.", "ok");
-    } else {
-      banner([
-        `Saved, but the daemon didn't apply it: ${reload.message || "unknown error"}. It will use the file on its next start (`,
-        el("code", {}, "docker compose restart daemon"), ").",
-      ], "err");
-    }
-    pollDaemon();
+    pollStatus();
   } catch (e) {
-    banner(`Save failed: ${e.message}`, "err");
+    banner(`Not saved: ${e.message}`, "err");
     renderHeader();
+  }
+}
+
+async function pollLive() {
+  try {
+    S.live = (await api("GET", "/controllers")).controllers;
+  } catch {
+    S.live = [];
   }
 }
 
 async function pollDiscovery() {
   try {
-    S.discovery = await api("GET", "/api/config/discovered");
+    S.discovery = await api("GET", "/discovered");
   } catch (e) {
-    S.discovery = { ...S.discovery, error: `Server unreachable: ${e.message}` };
+    S.discovery = { ...S.discovery, error: `lightd unreachable: ${e.message}` };
   }
-  // Adopted boards discovery can't see (other subnet): ask them directly once, for their outputs.
-  for (const c of S.controllers) {
-    const ip = c.ip.trim();
-    if (ip && !S.probed.has(ip) && !(S.discovery.nodes || []).some((n) => n.ip === ip)) {
-      S.probed.add(ip);
-      api("POST", "/api/config/probe", { ip }).catch(() => {});
-    }
-  }
+}
+
+async function poll() {
+  await Promise.all([pollLive(), pollDiscovery()]);
   renderControllers();
   renderDiscovery();
 }
 
-async function pollDaemon() {
+async function pollStatus() {
   const pill = $("daemon-status");
   try {
-    const res = await api("GET", "/engine/api/config");
-    const n = Object.keys(res.controllers || {}).length;
+    const s = await api("GET", "/status");
     pill.className = "pill ok";
-    pill.textContent = `Daemon live · ${plural(n, "controller")}`;
-    pill.title = "";
+    pill.textContent = `lightd · ${s.controllers.online}/${s.controllers.total} online`;
+    pill.title = `${Math.round(s.actual_fps)} fps, ${plural(s.runs, "pattern")} running`;
   } catch {
     pill.className = "pill err";
-    pill.textContent = "Daemon offline";
-    pill.title = "Saved changes apply when the daemon next starts";
+    pill.textContent = "lightd offline";
+    pill.title = "The configuration can't be loaded or saved until lightd is running";
   }
 }
 
@@ -527,8 +571,8 @@ async function bootstrap() {
   $("add-controller-btn").addEventListener("click", () => openControllerDialog({ mode: "add" }));
   $("rescan-btn").addEventListener("click", async () => {
     try {
-      S.discovery = await api("POST", "/api/config/rescan");
-      renderDiscovery();
+      await api("POST", "/discovered/rescan");
+      await poll();
     } catch (e) {
       banner(`Rescan failed: ${e.message}`, "err");
     }
@@ -538,33 +582,33 @@ async function bootstrap() {
     const ip = $("probe-ip").value.trim();
     if (!ip) return;
     try {
-      await api("POST", "/api/config/probe", { ip });
+      await api("POST", "/discovered/probe", { ip });
       $("probe-ip").value = "";
       banner(null);
-      await pollDiscovery();
+      await poll();
     } catch (err) {
       banner(err.message, "err");
     }
   });
   // Re-render once focus leaves a channel name (re-rendering is skipped while typing).
-  $("controllers-list").addEventListener("focusout", () => setTimeout(() => {
-    if (!$("controllers-list").contains(document.activeElement)) renderAll();
+  $("controllers-list").addEventListener("focusout", (e) => setTimeout(() => {
+    if (e.target.matches("input[type=text]") && document.activeElement !== e.target) renderAll();
   }));
   window.addEventListener("beforeunload", (e) => {
     if (S.meta && isDirty()) e.preventDefault();
   });
 
+  pollStatus();
+  setInterval(pollStatus, STATUS_POLL_MS);
   try {
     await load();
   } catch (e) {
-    banner(`Could not load the configuration: ${e.message}`, "err");
+    banner(`Could not load the configuration from lightd: ${e.message}`, "err");
     return;
   }
   renderAll();
-  await pollDiscovery();
-  pollDaemon();
-  setInterval(pollDiscovery, POLL_MS);
-  setInterval(pollDaemon, DAEMON_POLL_MS);
+  await poll();
+  setInterval(poll, POLL_MS);
 }
 
 document.addEventListener("DOMContentLoaded", bootstrap);

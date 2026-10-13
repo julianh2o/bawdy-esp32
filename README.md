@@ -4,6 +4,12 @@ An enterprise-grade, modular lighting choreography and spatial infrastructure ma
 
 The platform provides a **3-tier layered architecture**: a high-throughput **virtual hardware digital twin simulator**, a **headless 10-layer compositing engine and REST daemon**, and a native **Java 17 Swing desktop Universe Manager** with concurrent timeline cue scheduling, 2D spatial CAD venue visualization, live hardware patch editing, and controller fleet telemetry.
 
+> **Refactor in progress.** The new stack is **lightd** (`src/lightd`, `python -m lightd`), which runs Lua
+> patterns on WLED controller channels and owns the configuration, on top of the low-level **`wled`** library
+> (`src/wled`). The web UI's `/config` (setup) and `/patterns` (editor) pages talk to it, and Docker runs it as
+> the daemon. The engine described below is being retired; see [REFACTOR.md](REFACTOR.md) and
+> [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
 ---
 
 ## 🏗️ System Architecture & Layered Design

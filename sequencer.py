@@ -55,27 +55,6 @@ def parse_args() -> argparse.ArgumentParser:
         default=os.environ.get("SEQUENCES_DIR") or None,
         help="Directory for saved sequences (default: ./sequences) [SEQUENCES_DIR]",
     )
-    parser.add_argument(
-        "--controllers",
-        default=os.environ.get("CONTROLLERS_FILE") or str(root_dir / "config" / "controllers.json"),
-        help="controllers.json edited by the /config page (default: ./config/controllers.json) [CONTROLLERS_FILE]",
-    )
-    parser.add_argument(
-        "--patch",
-        default=os.environ.get("PATCH_FILE") or str(root_dir / "config" / "patch.json"),
-        help="patch.json edited by the /config page (default: ./config/patch.json) [PATCH_FILE]",
-    )
-    parser.add_argument(
-        "--universe",
-        default=os.environ.get("UNIVERSE_FILE") or str(root_dir / "config" / "universe.json"),
-        help="universe.json whose fixtures the /config page maps (default: ./config/universe.json) [UNIVERSE_FILE]",
-    )
-    parser.add_argument(
-        "--no-discovery",
-        action="store_true",
-        default=(os.environ.get("DISCOVERY", "").strip().lower() in ("0", "false", "no", "off")),
-        help="Don't browse mDNS for WLED boards on the /config page [DISCOVERY=false]",
-    )
     return parser
 
 
@@ -124,14 +103,7 @@ def run_web_app(args: argparse.Namespace, console: Console) -> None:
     from wled_sequencer.server import SequencerAppServer
 
     app_server = SequencerAppServer(
-        host=args.host,
-        port=args.port,
-        sequences_dir=args.sequences,
-        engine_url=args.engine,
-        controllers_file=args.controllers,
-        patch_file=args.patch,
-        universe_file=args.universe,
-        discovery=not args.no_discovery,
+        host=args.host, port=args.port, sequences_dir=args.sequences, engine_url=args.engine
     )
     app_server.start()
 
@@ -144,9 +116,7 @@ def run_web_app(args: argparse.Namespace, console: Console) -> None:
     console.print(f"  • Web Studio:    [bold green]{url}[/bold green]")
     console.print(f"  • Sequences Dir: [dim]{app_server.sequences_dir}[/dim]")
     console.print(f"  • Engine Target: [cyan]{args.engine}[/cyan]")
-    console.print(f"  • Controllers:   [bold green]{url}/config[/bold green] [dim]({args.controllers})[/dim]")
-    if app_server.discovery and app_server.discovery.error:
-        console.print(f"  • [yellow]Discovery off: {app_server.discovery.error}[/yellow]")
+    console.print(f"  • Setup:         [bold green]{url}/config[/bold green]   Patterns: [bold green]{url}/patterns[/bold green]")
     console.print()
     console.print("Press [bold red]Ctrl+C[/bold red] to stop.")
     console.print()

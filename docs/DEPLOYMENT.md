@@ -4,62 +4,72 @@ Two images, published to Docker Hub and run together by `docker-compose.yaml`:
 
 | Service / container | Image | Dockerfile | Purpose |
 |---|---|---|---|
-| `daemon` / `bawdy-lights-daemon` | `julianh2o/bawdy-lights-daemon` | `Dockerfile.daemon` | Lighting engine. REST API on port 8765, DDP to the WLED boards. |
-| `web` / `bawdy-lights-web` | `julianh2o/bawdy-lights-web` | `Dockerfile.web` | Browser sequencer on port 8080. Stores sequences and proxies `/engine/*` to the daemon. |
-| `sim` / `bawdy-lights-sim` (profile) | `bawdy-lights-sim` (local build only) | `Dockerfile.daemon --target sim` | Virtual boards + visualizer, for testing without hardware. |
+| `daemon` / `bawdy-lights-daemon` | `julianh2o/bawdy-lights-daemon` | `Dockerfile.daemon` | **lightd**: runs Lua patterns on WLED channels, owns the configuration. REST API on port 8765, DDP to the boards. |
+| `web` / `bawdy-lights-web` | `julianh2o/bawdy-lights-web` | `Dockerfile.web` | Browser UI on port 8080: `/config` (setup), `/patterns` (editor), sequencer. Proxies `/engine/*` to lightd. |
+| `sim` / `bawdy-lights-sim` (profile) | `bawdy-lights-sim` (local build only) | `Dockerfile.daemon --target sim` | Parked: the old universe/patch simulator. Doesn't work with lightd. |
 
 ## 1. Prepare the network and boards
 
-- Give every board a **fixed IP** (DHCP reservation on the router, or a static IP in WLED under *Config → WiFi Setup*). The engine addresses boards by IP, so a changed address means a dark board.
-- In WLED, enable realtime DDP: *Config → Sync Interfaces → Realtime* → "Receive UDP realtime" on, port **4048** (the default). Make sure "Use main segment only" and timeouts are left at defaults unless you know you need them.
-- Set the **LED color order on the board** (*Config → LED Preferences*). The engine sends plain data; don't compensate in the patch. (See TODO.md #1: the engine still applies the patch's `color_order`; keep these consistent until that's fixed.)
-- Boards and the Docker host must be on the same subnet, since the frame-sync packet is a UDP broadcast.
+- Prefer a **fixed IP** per board (DHCP reservation, or a static IP in WLED under *Config → WiFi Setup*). lightd follows a board that changes IP when mDNS sees it (matched by MAC), but a fixed address is the reliable path.
+- In WLED, enable realtime DDP: *Config → Sync Interfaces → Realtime* → "Receive UDP realtime" on, port **4048** (the default).
+- Set each output's **LED count and color order on the board** (*Config → LED Preferences*). lightd reads the outputs from the board and always sends RGB; the board reorders colors itself.
+- Boards on the Docker host's subnet are discovered automatically; boards elsewhere can be added by IP.
 
 ## 2. Configure
 
 ```sh
 cp .env.example .env
-cp config/universe.json.example   config/universe.json
-cp config/patch.json.example      config/patch.json
-cp config/controllers.json.example config/controllers.json
+mkdir -p config
+sudo chown -R 10001 config    # lightd runs as uid 10001 and writes its configuration here
 ```
 
-Then adopt your boards, either in the web UI or by hand. The board-to-fixture mapping lives in `patch.json`, which is edited by hand for now.
+lightd owns the configuration in `config/`:
 
-**Web UI (`http://<docker-host>:8080/config`)** lists the adopted controllers. Each one expands into its channels: the board's LED outputs, with GPIO pins and LED counts read from the board. Give each channel a name there. Below the list, a collapsed "N unadopted boards discovered" section shows boards found on the LAN that aren't adopted yet; adopting one opens its channels, ready to name. **Identify** blinks LEDs white for a few seconds so you can tell which physical strip is which: on a board it blinks every LED, on a channel only that output's LEDs. It works before adopting, and falls back to sending directly from the web container if the daemon is down.
+| File | What | Written by |
+|---|---|---|
+| `controllers.json` | Adopted boards: id, IP, port, MAC/host, channel names and `reversed` flags | `/config` page (via lightd), or by hand |
+| `patterns/*.lua` | Your saved patterns | `/patterns` page (via lightd) |
+| `lightd-state.json` | Patterns currently running, restored on restart | lightd |
 
-**Save & apply** writes `config/controllers.json` and tells the daemon to reload it, so changes take effect within a frame.
+**Web UI (`http://<docker-host>:8080/config`)** lists the adopted controllers. Each one expands into its channels: the board's LED outputs, with GPIO pins and LED counts as lightd reads them from the board. Name each channel and tick **Reversed** if pixel 0 is at the far end. Below the list, a collapsed "N unadopted boards discovered" section shows boards lightd found on the LAN that aren't adopted yet. **Identify** blinks LEDs white for a few seconds so you can tell which physical strip is which: on a board it blinks every LED, on a channel only that output's LEDs.
 
-- Discovery uses mDNS: every WLED board advertises `_wled._tcp`, named by its mDNS address (*Config → WiFi Setup*). mDNS is multicast and doesn't cross subnets or VLANs, so boards elsewhere can be added with **Add by IP**, which reads `http://<ip>/json/info`. **Rescan** queries the network again right away.
-- Adopting stores the board's MAC address. If the board later shows up at a different IP, the page offers to update the IP.
-- Channel names are stored per controller, in output order: `"channels": [{"name": "Front truss"}, {"name": "Back wall"}]`.
-- If `patch.json` gives `"channel_lengths": {"wled_01": [270, 270, 270]}`, the engine pads each channel to that length. It sends a board's channels back to back in one DDP stream, so without them a partly mapped channel would shift every later channel onto the wrong output. They must match the board's LED outputs (*LED Preferences*).
-- The web container runs as uid 10001 and needs write access to the file:
-  ```sh
-  cp config/controllers.json.example config/controllers.json   # or: echo '{}' > config/controllers.json
-  chmod a+w config/controllers.json
-  ```
-  Without that, the page is read-only and says why.
+**Save & apply** sends the configuration to lightd (`PUT /api/config`), which validates it, writes `config/controllers.json` and applies it at once. Every call the page makes goes to lightd's API through the web server's `/engine/*` proxy; the web container has no access to `config/`.
+
+- Discovery uses mDNS: every WLED board advertises `_wled._tcp`, named by its mDNS address (*Config → WiFi Setup*). mDNS is multicast and doesn't cross subnets or VLANs, so boards elsewhere can be added with **Add by IP**. **Rescan** queries the network again right away.
+- Adopting stores the board's MAC address and mDNS host. lightd follows the board if its IP changes; the page shows the new address and offers to save it.
+- Channel lengths aren't stored: lightd reads them from the board, so the board's *LED Preferences* are the source of truth.
 
 **By hand:** edit `config/controllers.json`:
 
 ```json
-{ "wled_01": { "ip": "192.168.1.101", "port": 4048 } }
+{
+  "wled_01": {
+    "ip": "192.168.1.101",
+    "port": 4048,
+    "channels": [{ "name": "Front truss" }, { "name": "Back wall", "reversed": true }]
+  }
+}
 ```
 
-`port` defaults to 4048. Extra keys (the page stores `name`, `mac`, `host` and `channels`) are ignored by the daemon. You can instead embed the same mapping as a top-level `"controllers"` key in `patch.json`; entries in `controllers.json` override it. A controller in the patch with no IP gets no output; the daemon starts anyway and lists it in a warning, so a fresh install can be configured from the web UI.
-
-After editing config files by hand, apply them without a restart:
+`port` defaults to 4048. Apply it without a restart:
 
 ```sh
 curl -X POST http://<docker-host>:8765/api/config/reload
 ```
 
-This re-reads `controllers.json` and the universe/patch files. If anything is invalid, the daemon keeps running the previous config and returns the error.
+If the file is invalid, lightd keeps the previous configuration and returns the error.
 
-Set `WLED_BROADCAST_IP` in `.env` to your subnet broadcast (e.g. `192.168.1.255`). The default `255.255.255.255` works on many networks but some routers/OSes drop it.
+### Configuration API (lightd)
 
-Config is mounted read-only at `/config`; it is not baked into the image. The built-in presets (`data/presets`) are in the image.
+| Method | Path | |
+|---|---|---|
+| GET | `/api/config` | `controllers.json` as stored, with its path, whether lightd can write it, and any read error |
+| PUT | `/api/config` | `{"controllers": {...}}`: validate, save and apply |
+| POST | `/api/config/reload` | re-read the file from disk |
+| GET | `/api/controllers` | live state per controller: online, current IP, board info, channels |
+| GET | `/api/discovered` | boards seen over mDNS (and probed by IP) |
+| POST | `/api/discovered/rescan`, `/api/discovered/probe` | rescan now; probe `{"ip": ...}` |
+| POST | `/api/identify` | `{"target": "wled_01/2"}`, `{"controller_id": ...}` or `{"ip": ..., "led_start", "led_count"}`; `"stop": true` ends it |
 
 ## 3. Run
 
@@ -67,11 +77,11 @@ Config is mounted read-only at `/config`; it is not baked into the image. The bu
 docker compose pull         # julianh2o/bawdy-lights-daemon + julianh2o/bawdy-lights-web from Docker Hub
 docker compose up -d        # or: docker compose up -d --build   (build from this checkout)
 docker compose ps           # both should become "healthy"
-curl http://<docker-host>:8765/api/status   # "running": true, actual_fps near WLED_FPS
+curl http://<docker-host>:8765/api/status   # actual_fps near LIGHTD_FPS
 ```
 
 - Web UI: `http://<docker-host>:8080` from any machine on the LAN.
-- Daemon API: `http://<docker-host>:8765`. Point the Java Universe Manager here (`ENGINE_URL=http://<docker-host>:8765 ./sequencer-gui`).
+- lightd API: `http://<docker-host>:8765`. (The Java sequencer still speaks the old engine API; see REFACTOR.md.)
 
 Pin a version with `IMAGE_TAG=<version>` in `.env` (default `latest`).
 
@@ -79,19 +89,14 @@ Pin a version with `IMAGE_TAG=<version>` in `.env` (default `latest`).
 
 Both containers use `network_mode: host`:
 
-- The daemon needs it so the DDP sync broadcast reaches the LAN; Docker's bridge network does not forward broadcasts.
+- lightd needs it for mDNS discovery of WLED boards; multicast doesn't cross Docker's bridge network.
 - By default **both** the web UI (`WEB_PORT`, 8080) and the daemon API (`DAEMON_PORT`, 8765) are reachable on the LAN, so the Java Universe Manager and scripts can talk to the daemon directly.
 - The daemon API has **no authentication** (see TODO.md #7). Anyone on the network can control the lights. To lock it down, set `DAEMON_API_HOST=127.0.0.1` in `.env`: the API is then only reachable on the Docker host, and the web UI keeps working through its `/engine/*` proxy.
 - Host networking is Linux-only (not Docker Desktop on macOS/Windows). With host networking, `ports:` is ignored: change `WEB_PORT` / `DAEMON_PORT` in `.env`.
 
-### Simulator (no hardware)
+### Simulator (parked)
 
-```sh
-# .env: WLED_SIMULATOR=true
-docker compose --profile sim up --build
-```
-
-The visualizer is at `http://<host>:8090`. The daemon sends to `127.0.0.1` ports 4048+n, which the `sim` container listens on.
+The `sim` profile runs the old universe/patch simulator, which pairs with the old engine daemon (`run.py daemon --simulator`), not lightd. To try lightd without hardware, run it with `LIGHTD_DRY_RUN=true`: it renders frames but sends nothing.
 
 ### Sequences
 
@@ -105,7 +110,7 @@ docker compose pull && docker compose up -d     # published images
 git pull && docker compose up -d --build
 ```
 
-On `docker stop`/`compose down` the daemon receives SIGTERM, stops the engine, and sends a blackout frame before exiting (`stop_grace_period: 10s`).
+On `docker stop`/`compose down` lightd receives SIGTERM, stops rendering, and sends a blackout frame before exiting (`stop_grace_period: 10s`). Running patterns are restored when it starts again.
 
 ## Building and publishing images
 
@@ -123,9 +128,9 @@ Each build is tagged `julianh2o/<image>:<version>` and `:latest`. The version de
 
 ## Environment reference
 
-Compose (`.env`): `REGISTRY_USER`, `IMAGE_TAG`, `WEB_PORT`, `DAEMON_PORT`, `DAEMON_API_HOST`, `SIM_WEB_PORT`, plus the daemon variables below.
+Compose (`.env`): `REGISTRY_USER`, `IMAGE_TAG`, `WEB_PORT`, `DAEMON_PORT`, `DAEMON_API_HOST`, `LIGHTD_FPS`, `LIGHTD_DRY_RUN`, `SIM_WEB_PORT`.
 
-Daemon: `WLED_API_HOST`, `WLED_API_PORT`, `WLED_FPS`, `WLED_UNIVERSE`, `WLED_PATCH`, `WLED_CONTROLLERS`, `WLED_PRESET`, `WLED_BROADCAST_IP`, `WLED_SIMULATOR`, `WLED_DRY_RUN` (each maps to the CLI flag of the same name). Web: `SEQUENCER_HOST`, `SEQUENCER_PORT`, `SEQUENCES_DIR`, `ENGINE_URL`.
+lightd: `LIGHTD_HOST`, `LIGHTD_PORT`, `LIGHTD_FPS`, `LIGHTD_DRY_RUN`, `CONTROLLERS_FILE`, `USER_PATTERNS_DIR`, `LIGHTD_STATE`, `BUILTIN_PATTERNS_DIR`, `DISCOVERY` (`false` turns mDNS off). Web: `SEQUENCER_HOST`, `SEQUENCER_PORT`, `SEQUENCES_DIR`, `ENGINE_URL`.
 
 ## Not covered
 

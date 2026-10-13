@@ -1,11 +1,8 @@
-"""Tests for live config reload and the identify blink (daemon and web fallback)."""
+"""Tests for the old engine daemon's live config reload and identify blink."""
 
 import json
-import socket
 import tempfile
-import time
 import unittest
-import urllib.request
 from pathlib import Path
 
 from wled_app.domain.color import Color
@@ -13,8 +10,6 @@ from wled_engine.adapters.rest_daemon import EngineDaemon, handle_rest_request
 from wled_engine.core import LightingEngine
 from wled_engine.daemon_config import DaemonConfig
 from wled_engine.identify import IDENTIFY_HALF_PERIOD, IDENTIFY_LEVEL, IdentifyScheduler
-from wled_sequencer.identify import blink_direct
-from wled_sequencer.server import SequencerAppServer
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -166,89 +161,6 @@ class TestEngineIdentify(ConfigDirTest):
     def test_bad_requests(self) -> None:
         self.assertEqual(handle_rest_request(self.engine, "POST", "/api/identify", {})[0], 400)
         self.assertEqual(handle_rest_request(self.engine, "POST", "/api/identify", {"controller_id": "nope"})[0], 404)
-
-
-class TestWebIntegration(ConfigDirTest):
-    """Web server -> daemon: save triggers reload; identify goes via the daemon or directly."""
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.config.apply(self.engine, self.config.load())
-        self.daemon = EngineDaemon(self.engine, port=0)
-        self.daemon.start()
-        self.web = self.make_web(f"http://127.0.0.1:{self.daemon.port}")
-
-    def make_web(self, engine_url: str) -> SequencerAppServer:
-        web = SequencerAppServer(
-            port=0, sequences_dir=self.dir / "sequences", engine_url=engine_url,
-            controllers_file=self.controllers, patch_file=self.dir / "patch.json",
-        )
-        web.start()
-        self.addCleanup(web.stop)
-        return web
-
-    def tearDown(self) -> None:
-        self.daemon.stop()
-        super().tearDown()
-
-    def post(self, web: SequencerAppServer, method: str, path: str, body: dict):
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{web.port}{path}", data=json.dumps(body).encode(), method=method,
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            return json.loads(resp.read())
-
-    def test_save_reloads_daemon(self) -> None:
-        res = self.post(self.web, "PUT", "/api/config/controllers", {"controllers": {"wled_01": {"ip": "10.0.0.7"}}})
-        self.assertTrue(res["reload"]["ok"], res)
-        self.assertEqual(res["reload"]["controllers"], {"wled_01": "10.0.0.7:4048"})
-        self.assertEqual(self.engine.dispatcher.get_node("wled_01").ip, "10.0.0.7")
-
-    def test_save_reports_unreachable_daemon(self) -> None:
-        web = self.make_web("http://127.0.0.1:9")
-        res = self.post(web, "PUT", "/api/config/controllers", {"controllers": {"wled_01": {"ip": "10.0.0.7"}}})
-        self.assertFalse(res["reload"]["ok"])
-        self.assertIn("unreachable", res["reload"]["message"])
-
-    def test_identify_via_daemon(self) -> None:
-        res = self.post(self.web, "POST", "/api/config/identify", {"ip": "10.0.0.8", "led_count": 50})
-        self.assertEqual(res["via"], "daemon")
-        self.assertIn(("10.0.0.8", 4048), self.engine.identify.active)
-
-    def test_identify_one_channel_via_daemon(self) -> None:
-        self.post(self.web, "POST", "/api/config/identify", {"ip": "10.0.0.8", "led_start": 4, "led_count": 2})
-        frame = self.engine.identify.frames(time.monotonic())[("10.0.0.8", 4048)]
-        self.assertEqual(frame, bytes(12) + bytes([IDENTIFY_LEVEL]) * 6)
-
-    def test_identify_direct_when_daemon_down(self) -> None:
-        web = self.make_web("http://127.0.0.1:9")
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as board:
-            board.bind(("127.0.0.1", 0))
-            board.settimeout(2.0)
-            port = board.getsockname()[1]
-            res = self.post(web, "POST", "/api/config/identify", {"ip": "127.0.0.1", "port": port, "led_count": 10, "seconds": 0.5})
-            self.assertEqual(res["via"], "direct")
-            pkt = board.recv(2048)
-        self.assertEqual(pkt[0], 0x41)
-        self.assertEqual(pkt[10:], bytes([IDENTIFY_LEVEL]) * 30)
-
-
-class TestDirectBlink(unittest.TestCase):
-    def test_ends_with_black_frame(self) -> None:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as board:
-            board.bind(("127.0.0.1", 0))
-            board.settimeout(1.0)
-            blink_direct("127.0.0.1", board.getsockname()[1], led_count=600, seconds=0.5)
-            frames = []
-            while True:  # blink lasts 0.5 s; stop once packets stop arriving
-                try:
-                    frames.append(board.recv(2048))
-                except socket.timeout:
-                    break
-        self.assertGreater(len(frames), 4)
-        self.assertEqual(len(frames[0]) - 10, 1440)  # split at 480 px
-        self.assertEqual(frames[-1][10:], bytes(len(frames[-1]) - 10))
 
 
 if __name__ == "__main__":

@@ -1,7 +1,8 @@
-# Headless lighting engine (REST API + DDP output to WLED boards).
+# lightd: runs Lua patterns on WLED controller channels and owns the configuration
+# (controllers.json, user patterns, run state under /config), with a REST API on 8765.
 #
 #   docker build -f Dockerfile.daemon -t bawdy-lights-daemon .
-#   docker build -f Dockerfile.daemon --target sim -t bawdy-lights-sim .   # optional simulator image
+#   docker build -f Dockerfile.daemon --target sim -t bawdy-lights-sim .   # old simulator (parked)
 FROM python:3.12-slim AS base
 
 ENV PYTHONUNBUFFERED=1 \
@@ -25,15 +26,18 @@ USER wled
 EXPOSE 8080
 CMD ["python", "sim.py", "--universe", "/config/universe.json", "--patch", "/config/patch.json", "--web-host", "0.0.0.0", "--no-browser"]
 
-# --- daemon (default target) ------------------------------------------------
+# --- daemon (default target): lightd ----------------------------------------
 FROM base AS daemon
+
+RUN pip install --no-cache-dir "zeroconf>=0.131" "lupa>=2.0"
+COPY patterns ./patterns
 
 ARG VERSION=unknown
 ARG BUILD_DATE
 ARG VCS_REF
 
 LABEL org.opencontainers.image.title="bawdy-lights-daemon"
-LABEL org.opencontainers.image.description="Headless WLED lighting engine: REST API + DDP output to WLED boards"
+LABEL org.opencontainers.image.description="lightd: Lua patterns on WLED controller channels, REST API + DDP output"
 LABEL org.opencontainers.image.version="${VERSION}"
 LABEL org.opencontainers.image.created="${BUILD_DATE}"
 LABEL org.opencontainers.image.revision="${VCS_REF}"
@@ -41,23 +45,24 @@ LABEL org.opencontainers.image.authors="Julian Hartline <https://www.julianhartl
 LABEL org.opencontainers.image.url="https://hub.docker.com/r/julianh2o/bawdy-lights-daemon"
 LABEL org.opencontainers.image.source="https://github.com/julianh2o/bawdy-esp32"
 
-# All settings can be overridden with env vars (WLED_*) or by appending CLI args.
-# The API binds all interfaces so the web UI and the Java Universe Manager can reach it.
-# It has no authentication (see TODO.md #7); set WLED_API_HOST=127.0.0.1 to keep it local.
+# Settings are env vars (below) or CLI args appended to the command. The API binds all
+# interfaces and has no authentication (see TODO.md #7); set LIGHTD_HOST=127.0.0.1 to keep it local.
+# lightd writes to /config (controllers.json, patterns/, lightd-state.json): mount it read-write
+# and make it writable by uid 10001.
 ENV APP_VERSION="${VERSION}" \
-    WLED_API_HOST=0.0.0.0 \
-    WLED_API_PORT=8765 \
-    WLED_FPS=30 \
-    WLED_UNIVERSE=/config/universe.json \
-    WLED_PATCH=/config/patch.json \
-    WLED_CONTROLLERS=/config/controllers.json
-# (a missing controllers.json is only tolerated with WLED_SIMULATOR=true)
+    LIGHTD_HOST=0.0.0.0 \
+    LIGHTD_PORT=8765 \
+    LIGHTD_FPS=30 \
+    CONTROLLERS_FILE=/config/controllers.json \
+    USER_PATTERNS_DIR=/config/patterns \
+    LIGHTD_STATE=/config/lightd-state.json \
+    BUILTIN_PATTERNS_DIR=/app/patterns
 
 USER wled
 EXPOSE 8765
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
-    CMD python -c "import os,urllib.request as u; u.urlopen('http://127.0.0.1:%s/api/status' % os.environ.get('WLED_API_PORT','8765'), timeout=2)"
+    CMD python -c "import os,urllib.request as u; u.urlopen('http://127.0.0.1:%s/api/status' % os.environ.get('LIGHTD_PORT','8765'), timeout=2)"
 
 # Exec form so the Python process is PID 1 and receives SIGTERM (blackout on stop).
-ENTRYPOINT ["python", "run.py", "daemon"]
+ENTRYPOINT ["python", "-m", "lightd"]

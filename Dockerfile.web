@@ -1,5 +1,5 @@
-# Browser sequencer UI: static files + /api/sequences storage + /engine/* proxy to the daemon,
-# plus the /config page (edits /config/controllers.json, discovers WLED boards over mDNS).
+# Browser UI: static files (sequencer, /config setup, /patterns editor) + /api/sequences storage
+# + /engine/* proxy to lightd, which owns the configuration.
 #
 #   docker build -f Dockerfile.web -t bawdy-lights-web .
 FROM python:3.12-slim
@@ -13,7 +13,7 @@ RUN useradd --create-home --uid 10001 wled \
     && chown wled /data/sequences
 WORKDIR /app
 
-RUN pip install --no-cache-dir "rich>=13.0.0" "zeroconf>=0.131"
+RUN pip install --no-cache-dir "rich>=13.0.0"
 
 COPY sequencer.py ./
 COPY src/wled_sequencer ./src/wled_sequencer
@@ -35,10 +35,7 @@ ENV APP_VERSION="${VERSION}" \
     SEQUENCER_HOST=0.0.0.0 \
     SEQUENCER_PORT=8080 \
     SEQUENCES_DIR=/data/sequences \
-    ENGINE_URL=http://127.0.0.1:8765 \
-    CONTROLLERS_FILE=/config/controllers.json \
-    PATCH_FILE=/config/patch.json \
-    UNIVERSE_FILE=/config/universe.json
+    ENGINE_URL=http://127.0.0.1:8765
 
 USER wled
 VOLUME /data/sequences

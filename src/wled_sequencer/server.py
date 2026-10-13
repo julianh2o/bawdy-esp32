@@ -12,15 +12,6 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from wled_sequencer.controller_config import (
-    ConfigError,
-    ControllerConfigStore,
-    PatchStore,
-    WledDiscovery,
-    validate_controllers,
-    validate_patch,
-)
-from wled_sequencer.identify import blink_direct, stop_direct
 from wled_sequencer.models import SequenceData, SequenceRepository
 
 
@@ -35,7 +26,7 @@ class SequencerHandler(BaseHTTPRequestHandler):
 
     def _send_cors(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
     def _send_json(self, status: int, data: Any) -> None:
@@ -81,20 +72,6 @@ class SequencerHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def _engine_request(self, method: str, path: str, body: dict[str, Any] | None = None) -> tuple[int, Any]:
-        """Call the daemon API. Raises ``urllib.error.URLError`` if it's unreachable."""
-        data = json.dumps(body).encode("utf-8") if body is not None else None
-        req = urllib.request.Request(self.server.engine_url.rstrip("/") + path, data=data, method=method)
-        req.add_header("Content-Type", "application/json")
-        try:
-            with urllib.request.urlopen(req, timeout=5.0) as resp:
-                return resp.status, json.loads(resp.read() or b"{}")
-        except urllib.error.HTTPError as e:
-            try:
-                return e.code, json.loads(e.read() or b"{}")
-            except ValueError:
-                return e.code, {"message": e.reason}
-
     def _try_proxy(self) -> bool:
         if urlparse(self.path).path.startswith("/engine/"):
             self._proxy_to_engine()
@@ -107,156 +84,8 @@ class SequencerHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_PUT(self) -> None:
-        if self._try_proxy():
-            return
-        path = unquote(urlparse(self.path).path.rstrip("/"))
-
-        if path == "/api/config/controllers":
-            store = self.server.config_store
-            if store is None:
-                self._send_error(404, "No controllers file configured")
-                return
-            try:
-                saved = store.save(self._read_body().get("controllers"))
-            except (ConfigError, ValueError) as e:
-                self._send_error(400, str(e))
-                return
-            except OSError as e:
-                self._send_error(500, f"Could not write {store.path}: {e}")
-                return
-            self._send_json(200, {"status": "ok", "controllers": saved, "reload": self._reload_daemon()})
-            return
-
-        if path == "/api/config":
-            self._save_config(self._read_body())
-            return
-
-        self._send_error(404, f"Unknown endpoint: {path}")
-
-    def _reload_daemon(self) -> dict[str, Any]:
-        """Apply saved files right away: the daemon re-reads them and swaps them in between frames."""
-        try:
-            status, result = self._engine_request("POST", "/api/config/reload", {})
-            return {"ok": status == 200, **result} if isinstance(result, dict) else {"ok": False}
-        except (urllib.error.URLError, OSError, ValueError) as e:
-            return {"ok": False, "message": f"Daemon unreachable at {self.server.engine_url}: {e}"}
-
-    def _save_config(self, body: dict[str, Any]) -> None:
-        """Save controllers and/or patch (both validated before either is written), then reload once."""
-        cstore, pstore = self.server.config_store, self.server.patch_store
-        if "controllers" in body and cstore is None:
-            self._send_error(404, "No controllers file configured")
-            return
-        if "patch" in body and pstore is None:
-            self._send_error(404, "No patch file configured")
-            return
-        try:
-            if "controllers" in body:
-                validate_controllers(body["controllers"])
-            if "patch" in body:
-                universe = pstore.fixtures() if pstore.universe_path and pstore.universe_path.is_file() else None
-                validate_patch(body["patch"], {f["id"]: f["pixel_count"] for f in universe} if universe is not None else None)
-        except (ConfigError, ValueError) as e:
-            self._send_error(400, str(e))
-            return
-        result: dict[str, Any] = {"status": "ok"}
-        try:
-            if "controllers" in body:
-                result["controllers"] = cstore.save(body["controllers"])
-            if "patch" in body:
-                result["patch"] = pstore.save(body["patch"])
-        except OSError as e:
-            self._send_error(500, f"Could not write config: {e}")
-            return
-        result["reload"] = self._reload_daemon()
-        self._send_json(200, result)
-
-    def _full_config(self) -> dict[str, Any]:
-        """Everything the /config page edits: controllers, patch, and the universe's fixtures."""
-        out: dict[str, Any] = {"controllers": self._config_state()}
-        pstore = self.server.patch_store
-        if pstore is None:
-            out["patch"] = {"path": None, "writable": False, "data": {"name": "Patch", "segments": []}}
-            out["universe"] = {"path": None, "fixtures": []}
-            return out
-        try:
-            data, error = pstore.load(), None
-        except (OSError, ValueError) as e:
-            data, error = {"name": "Patch", "segments": []}, f"Could not read {pstore.path}: {e}"
-        out["patch"] = {
-            "path": str(pstore.path), "exists": pstore.path.is_file(), "writable": pstore.writable,
-            "error": error, "data": data,
-        }
-        try:
-            fixtures, uerror = pstore.fixtures(), None
-        except (OSError, ValueError) as e:
-            fixtures, uerror = [], f"Could not read {pstore.universe_path}: {e}"
-        if pstore.universe_path and not pstore.universe_path.is_file():
-            uerror = f"{pstore.universe_path} not found"
-        out["universe"] = {
-            "path": str(pstore.universe_path) if pstore.universe_path else None,
-            "error": uerror, "fixtures": fixtures,
-        }
-        return out
-
-    def _identify(self, body: dict[str, Any]) -> None:
-        """Blink a board via the daemon, or directly over DDP if the daemon is down."""
-        ip = str(body.get("ip") or "").strip()
-        if not ip:
-            self._send_error(400, "Expected 'ip'")
-            return
-        try:
-            port = int(body.get("port") or 4048)
-            led_count = int(body["led_count"]) if body.get("led_count") else None
-            led_start = int(body.get("led_start") or 0)
-            seconds = float(body["seconds"]) if body.get("seconds") else None
-        except (TypeError, ValueError) as e:
-            self._send_error(400, f"Invalid identify request: {e}")
-            return
-        payload = {"ip": ip, "port": port, "led_count": led_count, "led_start": led_start, "seconds": seconds, "stop": bool(body.get("stop"))}
-        try:
-            status, result = self._engine_request("POST", "/api/identify", payload)
-            if status == 200:
-                self._send_json(200, {**result, "via": "daemon"})
-                return
-            # Daemon is up but refused (e.g. an older daemon without /api/identify): blink directly.
-        except (urllib.error.URLError, OSError, ValueError):
-            pass
-        if payload["stop"]:
-            stop_direct(ip, port)
-        else:
-            blink_direct(ip, port, led_count, seconds, led_start)
-        self._send_json(200, {"status": "ok", "ip": ip, "port": port, "via": "direct"})
-
-    def _config_state(self) -> dict[str, Any]:
-        store = self.server.config_store
-        if store is None:
-            return {"path": None, "writable": False, "controllers": {}, "patch": {}}
-        try:
-            controllers, error = store.load(), None
-        except (OSError, ValueError) as e:
-            controllers, error = {}, f"Could not read {store.path}: {e}"
-        return {
-            "path": str(store.path),
-            "exists": store.path.is_file(),
-            "writable": store.writable,
-            "error": error,
-            "controllers": controllers,
-            "patch": store.patch_expectations(),
-            "patch_path": str(store.patch_path) if store.patch_path else None,
-        }
-
-    def _discovery_state(self) -> dict[str, Any]:
-        disc = self.server.discovery
-        if disc is None:
-            return {"enabled": False, "listening": False, "error": None, "nodes": []}
-        return {
-            "enabled": True,
-            "listening": disc.listening,
-            "error": disc.error,
-            "service_type": disc.service_type,
-            "nodes": disc.nodes(),
-        }
+        if not self._try_proxy():
+            self._send_error(404, f"Unknown endpoint: {urlparse(self.path).path}")
 
     def do_GET(self) -> None:
         if self._try_proxy():
@@ -268,18 +97,6 @@ class SequencerHandler(BaseHTTPRequestHandler):
         if path == "/api/sequences":
             seqs = self.server.repo.list_sequences()
             self._send_json(200, seqs)
-            return
-
-        if path == "/api/config/controllers":
-            self._send_json(200, self._config_state())
-            return
-
-        if path == "/api/config":
-            self._send_json(200, self._full_config())
-            return
-
-        if path == "/api/config/discovered":
-            self._send_json(200, self._discovery_state())
             return
 
         # 2. API: Load specific sequence
@@ -313,35 +130,11 @@ class SequencerHandler(BaseHTTPRequestHandler):
                 self._send_error(400, f"Failed to save sequence: {e}")
             return
 
-        if path == "/api/config/identify":
-            self._identify(self._read_body())
-            return
-
-        if path == "/api/config/rescan":
-            if self.server.discovery is None:
-                self._send_error(404, "Discovery is disabled")
-                return
-            self.server.discovery.rescan()
-            self._send_json(200, self._discovery_state())
-            return
-
-        if path == "/api/config/probe":
-            disc = self.server.discovery
-            if disc is None:
-                self._send_error(404, "Discovery is disabled")
-                return
-            try:
-                node = disc.probe(str(self._read_body().get("ip", "")).strip())
-            except (ConfigError, ValueError) as e:
-                self._send_error(400, str(e))
-                return
-            if node.get("info") is None:
-                self._send_error(502, f"No WLED board answered at {node['ip']}: {node.get('probe_error')}")
-                return
-            self._send_json(200, node)
-            return
-
         self._send_error(404, f"Unknown endpoint: {path}")
+
+    def do_PATCH(self) -> None:
+        if not self._try_proxy():
+            self._send_error(404, f"Unknown endpoint: {urlparse(self.path).path}")
 
     def do_DELETE(self) -> None:
         if self._try_proxy():
@@ -366,8 +159,9 @@ class SequencerHandler(BaseHTTPRequestHandler):
         static_dir = self.server.static_dir
         if path == "" or path == "/":
             target = static_dir / "index.html"
-        elif path == "/config":
-            target = static_dir / "config.html"
+        elif path in ("/config", "/patterns"):
+            # Controller setup and the pattern editor; both talk to lightd through /engine/*.
+            target = static_dir / f"{path.lstrip('/')}.html"
         else:
             rel = path.lstrip("/")
             target = static_dir / rel
@@ -410,16 +204,10 @@ class SequencerServer(ThreadingHTTPServer):
         repo: SequenceRepository,
         static_dir: Path,
         engine_url: str = "http://127.0.0.1:8765",
-        config_store: ControllerConfigStore | None = None,
-        discovery: WledDiscovery | None = None,
-        patch_store: PatchStore | None = None,
     ) -> None:
         self.repo = repo
         self.static_dir = static_dir
         self.engine_url = engine_url
-        self.config_store = config_store
-        self.patch_store = patch_store
-        self.discovery = discovery
         super().__init__(server_address, SequencerHandler)
 
 
@@ -433,12 +221,7 @@ class SequencerAppServer:
         sequences_dir: Path | str | None = None,
         static_dir: Path | str | None = None,
         engine_url: str = "http://127.0.0.1:8765",
-        controllers_file: Path | str | None = None,
-        patch_file: Path | str | None = None,
-        discovery: bool = False,
-        universe_file: Path | str | None = None,
     ) -> None:
-        """``discovery=True`` browses mDNS for WLED boards while the server runs."""
         self.host = host
         self.port = port
         self.engine_url = engine_url
@@ -451,12 +234,6 @@ class SequencerAppServer:
         self.sequences_dir = Path(sequences_dir) if sequences_dir else root_dir / "sequences"
         self.repo = SequenceRepository(self.sequences_dir)
 
-        self.config_store = (
-            ControllerConfigStore(controllers_file, patch_file) if controllers_file else None
-        )
-        self.patch_store = PatchStore(patch_file, universe_file) if patch_file else None
-        self.discovery = WledDiscovery() if discovery else None
-
         self.server: SequencerServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -467,19 +244,12 @@ class SequencerAppServer:
     def start(self) -> None:
         if self.is_running:
             return
-        self.server = SequencerServer(
-            (self.host, self.port), self.repo, self.static_dir, self.engine_url,
-            config_store=self.config_store, discovery=self.discovery, patch_store=self.patch_store,
-        )
+        self.server = SequencerServer((self.host, self.port), self.repo, self.static_dir, self.engine_url)
         self.port = self.server.server_port
-        if self.discovery:
-            self.discovery.start()
         self._thread = threading.Thread(target=self.server.serve_forever, daemon=True, name="WledSequencerServer")
         self._thread.start()
 
     def stop(self) -> None:
-        if self.discovery:
-            self.discovery.stop()
         if self.server:
             self.server.shutdown()
             self.server.server_close()
