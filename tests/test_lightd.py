@@ -28,6 +28,9 @@ RGB_CFG = {"hw": {"led": {"ins": [dict(o, type=22) for o in CFG["hw"]["led"]["in
 REPO = Path(__file__).resolve().parent.parent
 RED = "function pixel(n, t, p) return 1, 0, 0 end"
 RAMP = "function pixel(n, t, p) return n / 255, 0, 0 end"
+# Red from api param "level" (default 0), green from the second entry of "bands" (key "audio.bands")
+API_PATTERN = """params = { level = { type = "api", default = 0 }, bands = { type = "api", key = "audio.bands" } }
+function pixel(n, t, p) return p.level, p.bands and p.bands[2] or 0, 0 end"""
 
 
 class TestConfig(unittest.TestCase):
@@ -147,6 +150,20 @@ class TestLua(unittest.TestCase):
         self.assertEqual(p.params()["speed"], 1.5)
         p.set_params({"speed": "fast"})
         self.assertEqual(p.params()["speed"], 2)  # not a number: default
+
+    def test_api_params_come_from_api_values(self):
+        p = Pattern(API_PATTERN)
+        self.assertEqual(p.schema["level"], {"type": "api", "default": 0})
+        self.assertEqual(p.api_keys, {"level": "level", "bands": "audio.bands"})
+        p.set_params({"level": 1})  # api params ignore run params once api values are applied
+        p.set_api_values({}, 1)
+        self.assertEqual(p.render(1, 0), bytes([0, 0, 0]))  # unset: default 0 / nil
+        p.set_api_values({"level": 0.5, "audio.bands": [0.1, 1.0]}, 2)
+        self.assertEqual(p.render(1, 0), bytes([128, 255, 0]))
+        self.assertEqual(p.params()["bands"], [0.1, 1.0])
+        p.set_params({})  # rebuilding p keeps the api values
+        p.set_api_values({"level": 0.5, "audio.bands": [0.1, 1.0]}, 2)
+        self.assertEqual(p.render(1, 0), bytes([128, 255, 0]))
 
     def test_errors_and_sandbox(self):
         with self.assertRaises(PatternError) as cm:
@@ -286,7 +303,38 @@ class TestRuns(RunsTest):
             self.runs.start(["a/1"], source="x = = 1")
 
 
+class TestValueStore(unittest.TestCase):
+    def test_set_update_delete(self):
+        from lightd.values import ValueStore
+        store = ValueStore()
+        store.set("audio.level", 0.5)
+        v0 = store.version
+        store.update({"bands": [1, 2], "audio.level": None})  # null deletes
+        self.assertEqual(store.all()[0], {"bands": [1, 2]})
+        self.assertGreater(store.version, v0)
+        with self.assertRaises(KeyError):
+            store.delete("audio.level")
+        for bad in ("", "a/b", "sp ace", "x" * 65):
+            with self.assertRaises(ValueError):
+                store.set(bad, 1)
+        with self.assertRaises(ValueError):
+            store.set("k", None)
+        store.update({"only": 1}, replace=True)
+        self.assertEqual(list(store.all()[0]), ["only"])
+        store.clear()
+        self.assertEqual(store.all(), ({}, {}))
+
+
 class TestLoop(RunsTest):
+    def test_api_values_drive_runs_live(self):
+        self.runs.start(["a/1"], source=API_PATTERN)
+        self.loop.step()
+        self.assertEqual(payloads(self.tx.sent)[:3], bytes([0, 0, 0]))
+        self.runs.api_values.update({"level": 1, "audio.bands": [0, 0.5]})
+        self.tx.sent.clear()
+        self.loop.step()
+        self.assertEqual(payloads(self.tx.sent)[:3], bytes([255, 128, 0]))
+
     def test_renders_runs_and_blacks_idle_channels(self):
         self.runs.start(["a/2"], source=RAMP)
         self.loop.step()
@@ -515,6 +563,29 @@ class TestApi(RunsTest):
         self.assertEqual(len(self.call("GET", "/api/runs")[1]["runs"]), 1)
         self.assertEqual(self.call("DELETE", f"/api/runs/{run['id']}")[0], 200)
         self.assertEqual(self.call("DELETE", f"/api/runs/{run['id']}")[0], 404)
+
+    def test_values(self):
+        self.runs.start(["a/1"], source=API_PATTERN)
+        status, res = self.call("PUT", "/api/values/level", {"value": 0.75})
+        self.assertEqual(status, 200, res)
+        self.assertEqual((res["key"], res["value"]), ("level", 0.75))
+        self.assertEqual(self.call("PATCH", "/api/values", {"values": {"audio.bands": [1, 2, 3], "x": {"a": 1}}})[0], 200)
+        status, res = self.call("GET", "/api/values")
+        self.assertEqual(res["keys"], ["audio.bands", "level", "x"])
+        self.assertEqual(res["values"]["audio.bands"], [1, 2, 3])
+        self.assertEqual(res["listening"], ["audio.bands", "level"])
+        self.assertIn("level", res["updated"])
+        self.assertEqual(self.call("GET", "/api/values/x")[1]["value"], {"a": 1})
+        self.assertEqual(self.call("DELETE", "/api/values/x")[0], 200)
+        self.assertEqual(self.call("GET", "/api/values/x")[0], 404)
+        self.assertEqual(self.call("DELETE", "/api/values/x")[0], 404)
+        self.assertEqual(self.call("PATCH", "/api/values", {"values": {"level": None}})[1]["values"], {"audio.bands": [1, 2, 3]})
+        self.assertEqual(self.call("PUT", "/api/values", {"values": {"y": 1}})[1]["values"], {"y": 1})
+        self.assertEqual(self.call("PUT", "/api/values/bad%20key", {"value": 1})[0], 400)
+        self.assertEqual(self.call("PUT", "/api/values/y", {})[0], 400)
+        self.assertEqual(self.call("PATCH", "/api/values", {"values": [1]})[0], 400)
+        self.assertEqual(self.call("DELETE", "/api/values")[0], 200)
+        self.assertEqual(self.call("GET", "/api/values")[1]["keys"], [])
 
     def test_errors_carry_lines(self):
         status, res = self.call("POST", "/api/runs", {"targets": ["a/1"], "source": "\nx = = 1"})

@@ -49,7 +49,7 @@ Defaults chosen for the open items: port 8765, user patterns in `config/patterns
 | Color output | Floats 0..1, clamped; converted to bytes by `lightd` |
 | Stateful effects | None. Patterns stay pure; deterministic `noise()`/`hash()` helpers stand in for randomness |
 | Params | Declared with a typed schema (type, default, min/max). min/max only set the UI slider's range; typed values can go beyond it |
-| Live inputs (sound, MIDI…) | Not implemented. They'll arrive later as more keys in `p` |
+| Live inputs (sound, MIDI…) | `type = "api"` params read key/value pairs set through `/api/values` (any JSON value), kept in memory and applied on the next frame |
 | Param changes | Applied live on the next frame. Since `t` is large, changing a rate param (speed, period) jumps the phase |
 | Pattern library | Built-ins in the repo's `patterns/`; user patterns saved through the API into a writable dir |
 | Ad-hoc Lua | Allowed: a run can carry its own source |
@@ -175,6 +175,10 @@ Channel lengths are not stored here; they come from the board.
 | GET | `/api/scenes` | scenes with their entries and whether each is active |
 | GET/PUT/DELETE | `/api/scenes/{name}` | read / save (`{entries: [...]}`) / delete a scene |
 | POST | `/api/scenes/{name}/activate` | start every entry; returns the runs and any entries that failed |
+| GET | `/api/values` | every API value, when each was set, and the keys playing runs read (`listening`) |
+| PATCH / PUT | `/api/values` | `{values: {k: v}}`: merge (null deletes) / replace all |
+| DELETE | `/api/values` | clear every value |
+| GET/PUT/DELETE | `/api/values/{key}` | read / set (`{value}`) / remove one value |
 | POST | `/api/blackout` | stop all runs |
 
 ### Layout

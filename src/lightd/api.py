@@ -197,6 +197,9 @@ def _route(app: Lightd, method: str, path: str, body: dict[str, Any], query: dic
                 return 200, {"status": "error" if errors else "ok", "runs": [r.to_dict() for r in started],
                              "errors": errors}
 
+    if head == "values":
+        return _values(app, method, parts[1:], body)
+
     if head == "blackout" and method == "POST":
         app.runs.stop_all()
         log.info("Blackout: all runs stopped")
@@ -218,6 +221,41 @@ def _logs(app: Lightd, query: dict[str, str]) -> Any:
     if query.get("format") == "text":
         return "".join(logs.format_text(r) + "\n" for r in records)
     return {"logs": records, "last_seq": app.logs.last_seq}
+
+
+def _values(app: Lightd, method: str, parts: list[str], body: dict[str, Any]) -> tuple[int, Any]:
+    """The values API: key/value pairs that patterns read through ``type = "api"`` params."""
+    store = app.runs.api_values
+    if not parts:
+        if method == "GET":
+            values, updated = store.all()
+            # listening: the keys the playing runs read, so a client can see what to send
+            listening = sorted({k for r in app.runs.runs() for k in r.pattern.api_keys.values()})
+            return 200, {"keys": list(values), "values": values, "updated": updated, "listening": listening}
+        if method in ("PATCH", "PUT"):
+            if "values" not in body:
+                raise ApiError(400, "Expected {'values': {key: value, ...}}")
+            store.update(body["values"], replace=method == "PUT")
+            return 200, {"status": "ok", "values": store.all()[0]}
+        if method == "DELETE":
+            store.clear()
+            return 200, {"status": "ok"}
+    elif len(parts) == 1:
+        key = parts[0]
+        try:
+            if method == "GET":
+                return 200, store.get(key)
+            if method == "PUT":
+                if "value" not in body:
+                    raise ApiError(400, "Expected {'value': ...}")
+                store.set(key, body["value"])
+                return 200, {"status": "ok", **store.get(key)}
+            if method == "DELETE":
+                store.delete(key)
+                return 200, {"status": "ok"}
+        except KeyError:
+            raise ApiError(404, f"No value '{key}'")
+    raise ApiError(404, f"No endpoint {method} /api/values/{'/'.join(parts)}")
 
 
 def _controllers(app: Lightd) -> list[dict[str, Any]]:

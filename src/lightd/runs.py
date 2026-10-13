@@ -16,6 +16,7 @@ from lightd.config import write_json_atomic
 from lightd.lua import DEFAULT_BUDGET, Pattern, PatternError
 from lightd.patterns import PatternLibrary
 from lightd.targets import Target, parse_targets
+from lightd.values import ValueStore
 
 log = logging.getLogger(__name__)
 
@@ -98,6 +99,7 @@ class RunManager:
         self.budget = budget
         self._runs: dict[str, Run] = {}
         self._brightness: dict[Target, float] = {}
+        self.api_values = ValueStore()  # what type = "api" params read; in memory only
         self.output = True
         self._lock = threading.Lock()
 

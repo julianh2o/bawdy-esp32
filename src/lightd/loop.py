@@ -60,8 +60,10 @@ class RenderLoop:
         self._sending = True
         now = time.time() if now is None else now
         assignments = self.runs.assignments()
+        api_values, api_version = self.runs.api_values.snapshot()
         for run in set(assignments.values()):
             run.apply_pending()
+            run.pattern.set_api_values(api_values, api_version)
 
         for entry in self.registry.entries():
             controller = entry.controller

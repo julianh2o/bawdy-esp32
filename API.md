@@ -12,6 +12,8 @@
   `scanner`, `strobe`, `twinkle`, `wave`. Leave `w` out and white LEDs are used automatically.
 - **Run**: a pattern + params on one or more targets. Starting a run on a channel replaces whatever ran there.
 - **Scene**: a saved set of runs, activated by name.
+- **API value**: a key/value pair stored in lightd (in memory) and set over REST, e.g. live audio levels. Patterns
+  read them through `type = "api"` params. See [Live values](#live-values-api-params).
 - **Output switch**: when off, nothing is sent and the boards show their own WLED effects.
 
 ## Common calls
@@ -44,6 +46,7 @@ curl -X PUT  $API/scenes/cozy -d '{"entries": [{"targets": ["wled_01/1"], "patte
 curl -X POST $API/patterns/check -d '{"source": "..."}'   # compile only; returns params schema or an error with line
 curl -X PUT  $API/patterns/my_pattern -d '{"source": "..."}'   # save to the library
 curl -X POST $API/identify -d '{"target": "wled_01/2"}'        # blink a channel to find it
+curl -X PUT $API/values/audio.level -d '{"value": 0.8}'        # set a live value for api params
 ```
 
 Errors come back as a non-2xx status with `{"status": "error", "message": "...", "line": n}`. `line` is only
@@ -97,5 +100,54 @@ end
 - Patterns are pure: there's no state between frames. Use `t`, plus `hash` or `noise` for randomness.
 - No `io`, `os`, `require` or `load`. Each frame has an instruction budget, so avoid heavy loops.
 - `WHITE` is true when the channel has white LEDs. Return `w` yourself only to take control of white.
+
+## Live values (api params)
+
+A param declared with `type = "api"` isn't set by run params or the editor's Params panel (it doesn't show there).
+lightd fills it every frame from a key/value store you write over REST, so an outside program (an audio analyser, a
+sensor, a MIDI bridge) can drive patterns live without restarting runs:
+
+```lua
+params = {
+  level = { type = "api", default = 0 },                -- reads key "level" (the param's name)
+  bands = { type = "api", key = "audio.bands" },        -- reads key "audio.bands"
+  color = { type = "color", default = "#ff2060" },      -- ordinary param, still in the Params panel
+}
+
+function pixel(n, t, p)
+  local band = p.bands and p.bands[1 + math.floor(n / COUNT * #p.bands)] or 0
+  local k = math.max(p.level, band)
+  return p.color.r * k, p.color.g * k, p.color.b * k
+end
+```
+
+- `key` defaults to the param's name. Several patterns (and runs) can read the same key.
+- A value can be any JSON: number, string, boolean, array, object. Arrays arrive as 1-based Lua tables, objects
+  as tables with string keys. lightd passes it through as-is (no type coercion or range check), so guard for the
+  shape you expect.
+- A key that isn't set gives the param's `default` (or `nil` if it has none), so always handle that case.
+- New values reach the LEDs on the next frame (30 fps by default). The editor's preview polls them about 10 times a
+  second.
+- Values live in memory only: a lightd restart clears them. A key keeps its last value until it's changed or
+  deleted, so a sender that stops should clear its keys (or send zeros) if the lights shouldn't freeze.
+- Keys are 1-64 characters from letters, digits, `_`, `.`, `:` and `-` (use dots to group, e.g. `audio.bass`). At
+  most 1000 keys.
+
+```sh
+curl $API/values                     # {"keys": [...], "values": {k: v}, "updated": {k: unix time}, "listening": [...]}
+                                     # listening = keys the playing runs read, i.e. what's worth sending
+curl $API/values/audio.level         # {"key": "audio.level", "value": 0.8, "updated": 1760000000.1}; 404 if unset
+
+curl -X PUT    $API/values/audio.level -d '{"value": 0.8}'               # set one key
+curl -X PATCH  $API/values -d '{"values": {"audio.level": 0.8, "audio.bands": [0.9, 0.4, 0.1]}}'
+                                                                          # set several at once; null deletes a key
+curl -X PUT    $API/values -d '{"values": {"audio.level": 0}}'           # replace everything with exactly this
+curl -X DELETE $API/values/audio.level                                    # remove one key (404 if unset)
+curl -X DELETE $API/values                                                # remove every key
+```
+
+Writes answer `{"status": "ok", ...}` with the new value(s). For a high-rate feed (audio at 30-60 updates a second)
+send everything in one `PATCH` per update, and reuse the HTTP connection (keep-alive) rather than opening one per
+request. Bodies are limited to 256 KB.
 
 More detail: `REFACTOR.md` (design and full endpoint list).

@@ -13,6 +13,7 @@ const API = "/engine/api";
 const WASM_URL = "https://cdn.jsdelivr.net/npm/wasmoon@1.16.0/dist/glue.wasm";
 const POLL_MS = 2000;
 const PREVIEW_FPS = 30;
+const API_VALUES_MS = 100; // how often the preview fetches values for type = "api" params
 const STORE_KEY = "lightd.patterns";
 // Floppy-disk "save" icon, drawn in the button's text color.
 const SAVE_ICON = `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor"
@@ -48,6 +49,7 @@ const S = {
   online: false,
   schema: {}, // params declared by the editor's code (last version that compiled)
   params: {}, // values set in the Params panel; unset params use the schema default
+  apiValues: {}, // the values API (/values), fed to type = "api" params in the preview
   brightness: 1, // applied to the selected channels on Run
   preview: { compile: null, render: null, clearParams: null, setParam: null, schema: null, ok: false, playing: true, pausedAt: 0, last: 0, error: null },
 };
@@ -212,6 +214,27 @@ function pushPreviewParams() {
   if (!S.preview.setParam) return;
   S.preview.clearParams();
   for (const [k, v] of Object.entries(S.params)) if (v !== null && v !== undefined) S.preview.setParam(k, v);
+  for (const name of apiParams()) {
+    const spec = S.schema[name];
+    const v = S.apiValues[spec.key || name] ?? spec.default;
+    if (v !== null && v !== undefined) S.preview.setParam(name, v);
+  }
+}
+
+// type = "api" params come from the values API, not the Params panel.
+function apiParams() {
+  return Object.keys(S.schema).filter((name) => S.schema[name].type === "api");
+}
+
+// While the pattern has api params, keep the preview fed with the server's current values.
+async function pollApiValues() {
+  if (apiParams().length) {
+    try {
+      S.apiValues = (await api("GET", "/values")).values;
+      pushPreviewParams();
+    } catch { /* keep the last values */ }
+  }
+  setTimeout(pollApiValues, API_VALUES_MS);
 }
 
 // Wall-clock time, like lightd, so the preview is in step with the LEDs.
@@ -467,7 +490,7 @@ function matchPreviewToSelection({ brightness = true } = {}) {
 // ---------- params panel ----------
 
 function renderParams() {
-  const names = Object.keys(S.schema).sort();
+  const names = Object.keys(S.schema).filter((name) => S.schema[name].type !== "api").sort();
   const rows = names.flatMap((name) => {
     const spec = S.schema[name];
     const isSet = Object.hasOwn(S.params, name);
@@ -844,6 +867,7 @@ async function bootstrap() {
   matchPreviewToSelection();
   renderParams();
   setInterval(poll, POLL_MS);
+  pollApiValues();
 }
 
 bootstrap();

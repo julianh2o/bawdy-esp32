@@ -128,8 +128,10 @@ local function infer_type(default)
   return "string"
 end
 
--- Normalized params schema: { name = {type, default, min, max, step, options, label} }.
+-- Normalized params schema: { name = {type, default, min, max, step, options, label, key} }.
 -- min/max set the UI slider's range; they don't limit the value, which can be typed in beyond them.
+-- type = "api" params aren't set by the user: the host fills them each frame from the values API, under `key`
+-- (default: the param's name), any JSON value (arrays become 1-based tables). Unset keys give `default`.
 function M.schema(env)
   local out = {}
   if type(env.params) ~= "table" then return out end
@@ -140,7 +142,7 @@ function M.schema(env)
         type = spec.type or infer_type(spec.default),
         default = spec.default,
         min = spec.min, max = spec.max, step = spec.step,
-        options = spec.options, label = spec.label,
+        options = spec.options, label = spec.label, key = spec.key,
       }
     end
   end

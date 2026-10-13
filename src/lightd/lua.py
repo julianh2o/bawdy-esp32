@@ -63,6 +63,11 @@ class Pattern:
             name: {k: v for k, v in spec.items() if v is not None}
             for name, spec in (_from_lua(self._rt[b"schema"](env)) or {}).items()
         } if self._has_params() else {}
+        # type = "api" params: param name -> values API key. Filled by set_api_values, not by set_params.
+        self.api_keys: dict[str, str] = {
+            name: str(spec.get("key") or name) for name, spec in self.schema.items() if spec.get("type") == "api"
+        }
+        self._api_version: int | None = None
         self.values: dict[str, Any] = {}
         self._p = self._rt[b"params"](env, None)
 
@@ -73,6 +78,16 @@ class Pattern:
         """Replace the param values (merged with schema defaults inside Lua)."""
         self.values = dict(values or {})
         self._p = self._rt[b"params"](self._env, _to_lua(self._L, self.values) if self.values else None)
+        self._api_version = None  # p was rebuilt: put the API values back in
+
+    def set_api_values(self, values: dict[str, Any], version: int) -> None:
+        """Fill the api params from the values API; a key that isn't set gives the param's default."""
+        if not self.api_keys or version == self._api_version:
+            return
+        self._api_version = version
+        for name, key in self.api_keys.items():
+            value = values[key] if key in values else self.schema[name].get("default")
+            self._p[name.encode("utf-8")] = _to_lua(self._L, value)
 
     def params(self) -> dict[str, Any]:
         """The p table the pattern currently sees."""
