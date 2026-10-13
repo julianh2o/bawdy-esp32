@@ -27,6 +27,13 @@ GOVEE_STATE = {"seg": [
     {"id": 0, "start": 0, "stop": 10, "len": 10, "n": "Govee RGB"},
 ]}
 
+# How Govee strips really come: one output, white on even LEDs and RGB on odd ones (segment spacing 1).
+GOVEE_INTERLEAVED_CFG = {"hw": {"led": {"ins": [{"start": 0, "len": 90, "pin": [16], "order": 1, "type": 22}]}}}
+GOVEE_INTERLEAVED_STATE = {"seg": [
+    {"id": 0, "start": 0, "stop": 90, "len": 90, "grp": 1, "spc": 1, "n": "Govee White"},
+    {"id": 1, "start": 1, "stop": 90, "len": 89, "grp": 1, "spc": 1, "n": "Govee RGB"},
+]}
+
 
 class FakeHttp:
     def __init__(self, info=INFO, cfg=CFG, fail=False, state=None):
@@ -114,7 +121,7 @@ class TestModels(unittest.TestCase):
         chans = board_channels(GOVEE_CFG, GOVEE_STATE)
         self.assertEqual(len(chans), 1)
         ch = chans[0]
-        self.assertEqual((ch.start, ch.length, ch.white_start, ch.white_length), (0, 10, 10, 2))
+        self.assertEqual((ch.start, ch.length, ch.white.start, ch.white.count), (0, 10, 10, 2))
         self.assertEqual((ch.segment, ch.white_segment, ch.name, ch.linked), (0, 1, "Govee RGB", True))
         self.assertEqual((ch.bytes_per_pixel, ch.ranges, ch.end), (4, [(0, 10), (10, 2)], 12))
         self.assertEqual(ch.to_dict()["white"], {"start": 10, "length": 2, "segment": 1})
@@ -132,8 +139,30 @@ class TestModels(unittest.TestCase):
         self.assertEqual([c.index for c in chans], [0, 1, 2])
 
     def test_segments_from_state(self):
-        segs = segments_from_state({"seg": [{"id": 3, "start": 5, "stop": 9, "n": " A "}, {"id": 1, "start": 0, "len": 5}]})
-        self.assertEqual([(s.id, s.start, s.length, s.name) for s in segs], [(1, 0, 5, None), (3, 5, 4, "A")])
+        segs = segments_from_state({"seg": [
+            {"id": 3, "start": 5, "stop": 9, "n": " A ", "grp": 2, "spc": 1, "rev": True},
+            {"id": 1, "start": 0, "len": 5},
+        ]})
+        self.assertEqual([(s.id, s.start, s.span, s.name) for s in segs], [(1, 0, 5, None), (3, 5, 4, "A")])
+        self.assertEqual((segs[1].group, segs[1].spacing, segs[1].reverse, segs[1].leds.count), (2, 1, True, 2))
+
+    def test_interleaved_govee_segments(self):
+        (ch,) = board_channels(GOVEE_INTERLEAVED_CFG, GOVEE_INTERLEAVED_STATE)
+        self.assertEqual((ch.start, ch.length, ch.white.start, ch.white.count, ch.end), (1, 45, 0, 45, 90))
+        self.assertEqual(ch.ranges[:2], [(1, 1), (3, 1)])
+        self.assertEqual(len(ch.ranges), 90)
+
+    def test_leds_place_grouping_spacing_reverse(self):
+        from wled.models import Leds
+        frame = bytearray(10 * 3)
+        Leds(1, 9, group=2, spacing=1).place(frame, 3, b"\x01\x01\x01\x02\x02\x02\x03\x03\x03", 3)
+        self.assertEqual(frame[::3], bytes([0, 1, 1, 0, 2, 2, 0, 3, 3, 0]))
+        frame = bytearray(4 * 4)
+        Leds(0, 4, reverse=True).place(frame, 4, b"\x01\x01\x01\x02\x02\x02", 3)  # RGB into RGBW, from the far end
+        self.assertEqual(frame, bytes(8) + b"\x02\x02\x02\x00\x01\x01\x01\x00")
+        frame = bytearray(5 * 3)
+        Leds(0, 5, group=1, spacing=1).place(frame, 3, b"\x09" * 3 * 9, 3)  # more pixels than LEDs: cut
+        self.assertEqual(frame[::3], bytes([9, 0, 9, 0, 9]))
 
     def test_info_and_mac(self):
         info = info_from_json(INFO)
@@ -193,6 +222,15 @@ class TestController(unittest.TestCase):
         self.assertEqual(frame[4:8], bytes((10, 1, 2, 0)))  # RGB LEDs: w left off
         self.assertEqual(frame[40:44], bytes([40]) * 4)  # white LED 1: mean of w 0..80
         self.assertEqual(frame[44:48], bytes([140]) * 4)  # white LED 2: mean of w 100..180
+
+    def test_interleaved_govee_frame(self):
+        board = WledController("10.0.0.9", transport=self.tx, http=FakeHttp(cfg=GOVEE_INTERLEAVED_CFG, state=GOVEE_INTERLEAVED_STATE))
+        board.refresh()
+        board.send_channels({0: b"\xff\x10\x00\x40" * 45})
+        frame = payloads(self.tx.sent)
+        self.assertEqual(len(frame), 90 * 4)
+        self.assertEqual(frame[:8], b"\x40\x40\x40\x40\xff\x10\x00\x00")  # white LED 0, RGB LED 1
+        self.assertEqual(frame[88 * 4:], b"\x40\x40\x40\x40\xff\x10\x00\x00")
 
     def test_identify_linked_channel_blinks_both_ranges(self):
         state = {"seg": [

@@ -315,7 +315,7 @@ function renderChannel(c, ch, output, ip) {
   const details = output
     ? [
         output.pins?.length ? `GPIO ${output.pins.join(",")}` : null,
-        white ? `${output.length} RGB + ${white.length} white LEDs` : `${output.length} LEDs`,
+        white ? `${output.length} RGB + ${white.length} white px` : `${output.length} px`,
         output.rgbw && !white ? "RGBW" : null,
       ].filter(Boolean).join(" · ")
     : "no output on board";
@@ -330,8 +330,8 @@ function renderChannel(c, ch, output, ip) {
         title: "Forget this channel",
         onclick: () => { c.channels.splice(ch, 1); renderAll(); },
       }, "Remove")
-    : identifyButton(ip, c.port, white
-        ? { ranges: [[output.start, output.length], [white.start, white.length]], channel: ch }
+    : identifyButton(ip, c.port, output.ranges?.length > 1
+        ? { ranges: output.ranges, channel: ch } // spaced or linked segments: only the LEDs it lights
         : { ledStart: output.start, ledCount: output.length, channel: ch });
 
   // Stored only when true, so untouched channels stay {"name": ""} and get trimmed on save.

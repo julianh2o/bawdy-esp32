@@ -23,24 +23,89 @@ class WledError(Exception):
 
 
 @dataclass(frozen=True)
+class Leds:
+    """Where a strip's pixels are on the board: ``span`` LEDs from ``start``, in groups of ``group`` LEDs that show
+    the same pixel, each group followed by ``spacing`` LEDs left dark (WLED's segment grouping and spacing).
+    ``reverse`` runs the pixels from the far end."""
+
+    start: int
+    span: int
+    group: int = 1
+    spacing: int = 0
+    reverse: bool = False
+
+    @property
+    def step(self) -> int:
+        return self.group + self.spacing
+
+    @property
+    def count(self) -> int:
+        """Pixels (WLED's virtual length)."""
+        return (self.span + self.step - 1) // self.step
+
+    @property
+    def end(self) -> int:
+        return self.start + self.span
+
+    @property
+    def contiguous(self) -> bool:
+        return self.spacing == 0 and self.group == 1 and not self.reverse
+
+    def runs(self) -> list[tuple[int, int]]:
+        """(start, count) of each run of lit LEDs."""
+        if self.spacing == 0:
+            return [(self.start, self.span)]
+        return [(self.start + i * self.step, min(self.group, self.span - i * self.step)) for i in range(self.count)]
+
+    def place(self, frame: bytearray, bpp: int, pixels: bytes, cb: int) -> None:
+        """Write ``pixels`` (``cb`` bytes each) into ``frame`` (``bpp`` bytes per LED). Extra pixels are dropped;
+        when ``cb`` < ``bpp`` the missing bytes are left as they are (zero)."""
+        n = min(len(pixels) // cb, self.count)
+        if not n:
+            return
+        if self.contiguous and cb == bpp:
+            frame[self.start * bpp: (self.start + n) * bpp] = pixels[:n * cb]
+            return
+        if self.reverse:  # pixel 0 at the far end, so pad a short buffer to full length first
+            pixels, n = pixels[:n * cb] + bytes((self.count - n) * cb), self.count
+            pixels = b"".join(pixels[i * cb:(i + 1) * cb] for i in range(n - 1, -1, -1))
+        stride = self.step * bpp
+        for j in range(self.group):
+            m = min(n, (self.span - j + self.step - 1) // self.step)  # pixels whose j-th LED is inside the span
+            if m <= 0:
+                continue
+            base = (self.start + j) * bpp
+            for k in range(min(cb, bpp)):
+                frame[base + k: base + k + m * stride: stride] = pixels[k: m * cb: cb]
+
+
+@dataclass(frozen=True)
 class Channel:
-    """A run of LEDs that lightd drives as one strip: a segment, a linked Govee pair, or an LED output."""
+    """A strip lightd drives as one: a segment, a linked Govee pair, or an LED output.
+
+    ``start``/``length`` are the first LED and the pixel count patterns see (``COUNT``). ``leds`` says where those
+    pixels are when they aren't simply ``length`` LEDs from ``start`` (segment grouping/spacing/reverse).
+    """
 
     index: int  # 0-based, in order of start LED
     start: int  # first LED in the board's LED index space
-    length: int
+    length: int  # pixels
     pins: tuple[int, ...] = ()
     order: str = "GRB"  # the board applies this itself; DDP data is always RGB(W)
     rgbw: bool = False  # the LEDs have a white chip, driven by the pattern's w
     name: str | None = None  # the segment's name on the board
     segment: int | None = None  # WLED segment id (None when built from an LED output)
-    white_start: int | None = None  # linked white segment (Govee): its LEDs show the pattern's w
-    white_length: int = 0
+    leds: Leds | None = None
+    white: Leds | None = None  # linked white segment (Govee): its LEDs show the pattern's w
     white_segment: int | None = None
 
     @property
+    def led_map(self) -> Leds:
+        return self.leds or Leds(self.start, self.length)
+
+    @property
     def linked(self) -> bool:
-        return self.white_start is not None
+        return self.white is not None
 
     @property
     def bytes_per_pixel(self) -> int:
@@ -49,29 +114,31 @@ class Channel:
 
     @property
     def ranges(self) -> list[tuple[int, int]]:
-        """(start, length) of every LED range the channel covers."""
-        out = [(self.start, self.length)]
-        if self.linked:
-            out.append((self.white_start, self.white_length))
-        return out
+        """(start, count) of every run of LEDs the channel lights."""
+        return self.led_map.runs() + (self.white.runs() if self.white else [])
 
     @property
     def end(self) -> int:
-        return max(s + n for s, n in self.ranges)
+        return max(self.led_map.end, self.white.end if self.white else 0)
 
     def to_dict(self) -> dict[str, Any]:
+        m = self.led_map
         return {
             "index": self.index,
             "start": self.start,
             "length": self.length,
+            "span": m.span,
+            "group": m.group,
+            "spacing": m.spacing,
             "pins": list(self.pins),
             "order": self.order,
             "rgbw": self.rgbw,
             "name": self.name,
             "segment": self.segment,
             "linked": self.linked,
-            "white": {"start": self.white_start, "length": self.white_length, "segment": self.white_segment}
-            if self.linked else None,
+            "white": {"start": self.white.start, "length": self.white.count, "segment": self.white_segment}
+            if self.white else None,
+            "ranges": [list(r) for r in self.ranges],
         }
 
 
@@ -81,8 +148,15 @@ class Segment:
 
     id: int
     start: int
-    length: int
+    span: int  # LEDs from start to stop
     name: str | None = None
+    group: int = 1
+    spacing: int = 0
+    reverse: bool = False
+
+    @property
+    def leds(self) -> Leds:
+        return Leds(self.start, self.span, self.group, self.spacing, self.reverse)
 
 
 @dataclass
@@ -145,10 +219,16 @@ def segments_from_state(state: dict[str, Any]) -> list[Segment]:
         if not isinstance(s, dict) or s.get("stopY") not in (None, 0, 1):
             continue
         start = int(s.get("start") or 0)
-        length = int(s.get("len") or (int(s.get("stop") or 0) - start))
-        if length > 0:
+        span = int(s.get("len") or (int(s.get("stop") or 0) - start))
+        if span > 0:
             name = s.get("n")
-            out.append(Segment(int(s.get("id") or 0), start, length, name.strip() if isinstance(name, str) and name.strip() else None))
+            out.append(Segment(
+                int(s.get("id") or 0), start, span,
+                name=name.strip() if isinstance(name, str) and name.strip() else None,
+                group=max(1, int(s.get("grp") or 1)),
+                spacing=max(0, int(s.get("spc") or 0)),
+                reverse=bool(s.get("rev")),
+            ))
     return sorted(out, key=lambda s: (s.start, s.id))
 
 
@@ -164,8 +244,9 @@ def _govee_part(name: str | None) -> tuple[str, str] | None:
 def channels_from_segments(segments: list[Segment], outputs: list[Channel]) -> list[Channel]:
     """One channel per segment, with each Govee RGB/White pair merged into a linked channel.
 
-    A segment takes pins, color order and RGBW from the LED output it starts in. A Govee white segment without a
-    matching RGB segment stays a channel of its own.
+    A segment takes pins, color order and RGBW from the LED output it starts in. Its grouping, spacing and reverse
+    are honoured (Govee strips interleave the two: spacing 1, RGB on odd LEDs, white on even). A Govee white
+    segment without a matching RGB segment stays a channel of its own.
     """
     def output_at(led: int) -> Channel | None:
         return next((o for o in outputs if o.start <= led < o.start + o.length), None)
@@ -187,14 +268,14 @@ def channels_from_segments(segments: list[Segment], outputs: list[Channel]) -> l
         out.append(Channel(
             index=len(out),
             start=seg.start,
-            length=seg.length,
+            length=seg.leds.count,
             pins=o.pins if o else (),
             order=o.order if o else "GRB",
             rgbw=o.rgbw if o else False,
             name=seg.name,
             segment=seg.id,
-            white_start=white.start if white else None,
-            white_length=white.length if white else 0,
+            leds=None if seg.leds.contiguous else seg.leds,
+            white=white.leds if white else None,
             white_segment=white.id if white else None,
         ))
     return out

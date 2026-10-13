@@ -120,8 +120,8 @@ class WledController:
 
         Requires ``channels`` (call ``refresh()`` first). Each buffer has ``ch.bytes_per_pixel`` bytes per pixel:
         r, g, b for RGB channels; r, g, b, w for RGBW and linked ones. Buffers are cut or zero-padded to the
-        channel's length. A linked channel's r, g, b go to its RGB LEDs and its w, spread over the white LEDs, to
-        every byte of those. The frame goes out as RGBW when any channel can show white, else as RGB.
+        channel's length, and placed per the channel's LED map (grouping, spacing, reverse). A linked channel's r, g, b
+        go to its RGB LEDs and its w, spread over the white LEDs, to every byte of those. The frame goes out as RGBW when any channel can show white, else as RGB.
         """
         if self.channels is None:
             raise WledError(f"{self._host}: channels unknown, call refresh() first")
@@ -134,18 +134,15 @@ class WledController:
             cb = ch.bytes_per_pixel
             n = min(len(data) // cb, ch.length)
             data = data[:n * cb]
-            if cb == bpp:
-                px = bytearray(data)
-                if ch.linked:
-                    px[3::4] = bytes(n)  # w belongs to the white LEDs
-            else:  # RGB channel in an RGBW frame
-                px = bytearray(n * 4)
+            if ch.linked:  # r, g, b to the RGB LEDs, w to the white ones
+                rgb = bytearray(n * 3)
                 for k in range(3):
-                    px[k::4] = data[k::3]
-            frame[ch.start * bpp: ch.start * bpp + len(px)] = px
-            if ch.linked:
-                levels = _spread(data[3::4], ch.white_length)
-                frame[ch.white_start * 4: (ch.white_start + len(levels)) * 4] = bytes(v for v in levels for _ in range(4))
+                    rgb[k::3] = data[k::4]
+                ch.led_map.place(frame, bpp, bytes(rgb), 3)
+                levels = _spread(data[3::4], ch.white.count)
+                ch.white.place(frame, bpp, bytes(v for v in levels for _ in range(4)), 4)
+            else:
+                ch.led_map.place(frame, bpp, data, cb)
         if not self.identifying:
             self._send(bytes(frame), rgbw=bpp == 4)
 
