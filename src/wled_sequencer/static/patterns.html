@@ -56,6 +56,27 @@
       <div id="editor" class="pe-code"></div>
       <div id="error-bar" class="pe-error" hidden></div>
 
+      <div id="assistant" class="card pe-assistant" hidden>
+        <div class="row">
+          <strong>Assistant</strong>
+          <span id="assistant-model" class="muted small"></span>
+          <span class="spacer"></span>
+          <button id="assistant-clear" class="btn btn-small btn-ghost" title="Start a new conversation">New chat</button>
+        </div>
+        <div id="assistant-log" class="pe-chat-log" aria-live="polite"></div>
+        <form id="assistant-form" class="pe-chat-form">
+          <textarea id="assistant-input" rows="2" placeholder="Describe a new pattern, or a change to the code above…"
+            aria-label="Message the assistant"></textarea>
+          <button id="assistant-send" type="submit" class="btn btn-primary">Send</button>
+        </form>
+        <div class="row small muted">
+          <label class="check" title="Put the assistant's code in the editor as soon as it checks out (undo with Ctrl-Z)">
+            <input type="checkbox" id="assistant-autoapply"> Apply working code automatically</label>
+          <span class="spacer"></span>
+          <span>Enter to send · Shift-Enter for a new line</span>
+        </div>
+      </div>
+
       <div class="card pe-preview">
         <div class="row">
           <strong>Preview</strong>

@@ -8,6 +8,7 @@
 
 import { LuaFactory } from "https://cdn.jsdelivr.net/npm/wasmoon@1.16.0/+esm";
 import { initOutputSwitch, showOutput } from "./output_switch.js";
+import { initAssistant } from "./assistant.js";
 
 const API = "/engine/api";
 const WASM_URL = "https://cdn.jsdelivr.net/npm/wasmoon@1.16.0/dist/glue.wasm";
@@ -188,12 +189,27 @@ async function initPreview() {
       if not ok then return "!" .. tostring(data) end
       return data
     end
+    -- For the assistant: compile code in its own environment and render a few frames with default params,
+    -- on RGB and RGBW strips. "" if it works, else the error. Doesn't touch the editor's preview.
+    function preview_check(src, count, t)
+      local e, err = RT.compile(src)
+      if not e then return tostring(err) end
+      local ok, perr = pcall(RT.params, e, {})
+      if not ok then return "params: " .. tostring(perr) end
+      local cases = { { 1, false, false }, { count, false, false }, { count, true, true } }
+      for i, c in ipairs(cases) do
+        local ok2, data = RT.render_hex(e, c[1], t + i * 7.3, perr, c[2], c[3])
+        if not ok2 then return tostring(data) end
+      end
+      return ""
+    end
   `);
   S.preview.compile = lua.global.get("preview_compile");
   S.preview.render = lua.global.get("preview_render");
   S.preview.clearParams = lua.global.get("preview_clear_params");
   S.preview.setParam = lua.global.get("preview_param");
   S.preview.schema = lua.global.get("preview_schema");
+  S.preview.check = lua.global.get("preview_check");
 }
 
 function compilePreview() {
@@ -859,6 +875,33 @@ async function bootstrap() {
     banner(`Preview unavailable: ${e.message}`, "err");
   }
   requestAnimationFrame(drawPreview);
+
+  initAssistant({
+    getSource: source,
+    getName: () => $("name-input").value.trim(),
+    // Replace the editor's code; undoable with Ctrl-Z. The pattern keeps its name, so Save updates it.
+    apply: (code) => { editor.setValue(code); editor.focus(); },
+    // Start an unsaved pattern with this code (for "make me a new pattern" answers).
+    applyAsNew: (code) => {
+      if (!confirmDiscard()) return false;
+      S.current = { name: "", builtin: false, modified: false, saved: null };
+      S.params = {};
+      $("name-input").value = "";
+      editor.setValue(code);
+      restartPreview();
+      renderLibrary();
+      updateButtons();
+      $("name-input").focus();
+      return true;
+    },
+    // "" if the code compiles and renders, else the error; null if the preview runtime isn't loaded.
+    check: (code) => {
+      if (!S.preview.check) return null;
+      const count = Math.max(1, Math.min(2000, parseInt($("preview-count").value, 10) || 150));
+      return S.preview.check(code, count, Date.now() / 1000);
+    },
+    banner,
+  });
 
   await Promise.all([loadLibrary(), poll()]);
   const start = prefs.pattern && S.library.find((p) => p.name === prefs.pattern) ? prefs.pattern : null;

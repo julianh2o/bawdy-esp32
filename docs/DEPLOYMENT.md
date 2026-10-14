@@ -129,11 +129,55 @@ PLATFORM=linux/amd64,linux/arm64 ./scripts/docker-build.sh --push   # multi-arch
 
 Each build is tagged `julianh2o/<image>:<version>` and `:latest`. The version defaults to `git describe --tags --always`. Pushing needs `docker login` as `julianh2o`. Override the namespace with `REGISTRY_USER=...`.
 
+## Pattern assistant (optional)
+
+The editor has a chat panel under the code where an LLM writes and edits patterns. It's off until the **web**
+container gets a model. Any OpenAI-compatible chat API works: set the variables in `.env`.
+
+```sh
+# Local Ollama (e.g. kvasir): no key
+ASSISTANT_BASE_URL=http://10.10.0.40:11434/v1
+ASSISTANT_MODEL=qwen-lights
+# DeepSeek's API
+ASSISTANT_BASE_URL=https://api.deepseek.com
+ASSISTANT_MODEL=deepseek-flash
+ASSISTANT_API_KEY=sk-...
+```
+
+The browser only talks to the web server (`/api/assistant/chat`), which holds the key and calls the model. Every code
+block in a reply is test-rendered in the browser with lightd's own Lua runtime. If it fails, the error is sent back to
+the model for a fix, up to twice. Nothing reaches the LEDs until you press Run.
+
+Model choice: the model needs to be good at writing code and to fit **entirely** in the GPU's memory. When part of
+it spills into system RAM, replies slow down. On kvasir's 24 GB card, Qwen3.8 27B (`qwen3-8-64k`) passed every test
+prompt. Small models (around 8B) write code that doesn't run.
+
+**Turn its thinking down.** Qwen3.8 thinks at its maximum level by default, which made replies take 20-180 s.
+`ASSISTANT_REASONING_EFFORT` sets `reasoning_effort` on each request; Ollama honours it, and `think: false` is
+ignored. Measured on the 5 test prompts, every result correct:
+
+| Effort | Reply time | Notes |
+|---|---|---|
+| default (max) | 19-180 s | |
+| `low` | 7-20 s | Recommended: a little planning for trickier requests |
+| `none` | 4-12 s | No thinking at all |
+
+The OpenAI-compatible endpoint can't set the context length, so Ollama loads the model at its own default (64k for
+`qwen3-8-64k`). That spills about 1.4 GB into system RAM and costs about 25% speed (78 vs 105 tokens/s at 16k). A
+copy with a 16k context, which is plenty for the assistant's ~4k-token requests, fits entirely on the GPU:
+
+```sh
+curl http://10.10.0.40:11434/api/create -d '{"model": "qwen-lights", "from": "qwen3-8-64k:latest", "parameters": {"num_ctx": 16384}}'
+# then ASSISTANT_MODEL=qwen-lights (already created on kvasir)
+```
+
 ## Environment reference
 
-Compose (`.env`): `REGISTRY_USER`, `IMAGE_TAG`, `WEB_PORT`, `DAEMON_PORT`, `DAEMON_API_HOST`, `LIGHTD_FPS`, `LIGHTD_DRY_RUN`, `SIM_WEB_PORT`.
+Compose (`.env`): `REGISTRY_USER`, `IMAGE_TAG`, `WEB_PORT`, `DAEMON_PORT`, `DAEMON_API_HOST`, `LIGHTD_FPS`, `LIGHTD_DRY_RUN`, `SIM_WEB_PORT`,
+`ASSISTANT_BASE_URL`, `ASSISTANT_MODEL`, `ASSISTANT_API_KEY`, `ASSISTANT_REASONING_EFFORT`.
 
-lightd: `LIGHTD_HOST`, `LIGHTD_PORT`, `LIGHTD_FPS`, `LIGHTD_DRY_RUN`, `CONTROLLERS_FILE`, `USER_PATTERNS_DIR`, `LIGHTD_STATE`, `BUILTIN_PATTERNS_DIR`, `DISCOVERY` (`false` turns mDNS off). Web: `SEQUENCER_HOST`, `SEQUENCER_PORT`, `SEQUENCES_DIR`, `ENGINE_URL`.
+lightd: `LIGHTD_HOST`, `LIGHTD_PORT`, `LIGHTD_FPS`, `LIGHTD_DRY_RUN`, `CONTROLLERS_FILE`, `USER_PATTERNS_DIR`, `LIGHTD_STATE`, `BUILTIN_PATTERNS_DIR`, `DISCOVERY` (`false` turns mDNS off). Web: `SEQUENCER_HOST`, `SEQUENCER_PORT`, `SEQUENCES_DIR`, `ENGINE_URL`, `ASSISTANT_BASE_URL`, `ASSISTANT_MODEL`,
+`ASSISTANT_API_KEY`, `ASSISTANT_TEMPERATURE` (default 0.3), `ASSISTANT_TIMEOUT` (seconds per reply, default 600), `ASSISTANT_REASONING_EFFORT` (`none`/`low`/`medium`/`high`).
 
 ## Not covered
 

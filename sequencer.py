@@ -95,9 +95,11 @@ def run_java_gui(engine_url: str, console: Console) -> None:
 
 def run_web_app(args: argparse.Namespace, console: Console) -> None:
     import webbrowser
+    from wled_sequencer.assistant import AssistantConfig
     from wled_sequencer.server import SequencerAppServer
 
-    app_server = SequencerAppServer(host=args.host, port=args.port, engine_url=args.engine)
+    assistant = AssistantConfig.from_env()
+    app_server = SequencerAppServer(host=args.host, port=args.port, engine_url=args.engine, assistant=assistant)
     app_server.start()
 
     url = f"http://{args.host}:{app_server.port}"
@@ -109,6 +111,10 @@ def run_web_app(args: argparse.Namespace, console: Console) -> None:
     console.print(f"  • Patterns:      [bold green]{url}[/bold green]")
     console.print(f"  • Setup:         [bold green]{url}/config[/bold green]")
     console.print(f"  • Engine Target: [cyan]{args.engine}[/cyan]")
+    if assistant.enabled:
+        console.print(f"  • Assistant:     [cyan]{assistant.model}[/cyan] at {assistant.base_url}")
+    else:
+        console.print("  • Assistant:     [dim]off (set ASSISTANT_BASE_URL and ASSISTANT_MODEL)[/dim]")
     console.print()
     console.print("Press [bold red]Ctrl+C[/bold red] to stop.")
     console.print()
