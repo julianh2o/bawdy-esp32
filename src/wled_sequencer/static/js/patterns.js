@@ -21,6 +21,9 @@ const SAVE_ICON = `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="
   stroke-width="1.4" stroke-linejoin="round"><path d="M2.5 2.5h9l2 2v9h-11z"/><path d="M5 2.5v3.5h5.5V2.5"/>
   <rect x="4.5" y="9" width="7" height="4.5"/></svg>`;
 
+// Square "stop" icon, drawn in the button's text color.
+const STOP_ICON = `<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="currentColor"/></svg>`;
+
 const TEMPLATE = `-- pixel(n, t, p) runs for every pixel, every frame.
 --   n: pixel number, 0 .. COUNT - 1      t: Unix time in seconds (the same on every channel)
 --   p: params (declared below)           return r, g, b in 0 .. 1, and optionally w (white)
@@ -518,15 +521,20 @@ function renderTargets() {
                   updateButtons();
                 },
               }),
-              el("span", {}, ch.name || ch.segment_name || `Ch ${ch.number}`),
-              run ? playingTag(run) : null,
+              // Two lines: the channel's name, and below it what's playing
+              el("span", { class: "pe-chan-text" },
+                el("span", { class: "pe-chan-name", title: ch.name || ch.segment_name || "" }, ch.name || ch.segment_name || `Ch ${ch.number}`),
+                run ? playingTag(run) : el("span", { class: "idle" }, usable ? "off" : "")),
               el("span", { class: "meta" }, usable
-                ? `${ch.length} px${ch.linked ? " + white" : ch.rgbw ? " · RGBW" : ""}${ch.reversed ? " · rev" : ""}${ch.brightness < 1 ? ` · ${Math.round(ch.brightness * 100)}%` : ""}`
+                // a linked Govee white segment makes the channel RGBW too
+                ? `${ch.length}px ${ch.rgbw || ch.linked ? "RGBW" : "RGB"}${ch.reversed ? " · rev" : ""}${ch.brightness < 1 ? ` · ${Math.round(ch.brightness * 100)}%` : ""}`
                 : "not on board"),
-              run ? el("button", {
-                class: "btn btn-small pe-stop", type: "button", title: `Stop ${run.pattern || "editor code"} on this channel (it goes black)`,
+              run ? icon(el("button", {
+                class: "btn btn-small pe-stop", type: "button",
+                title: `Stop ${run.pattern || "editor code"} on this channel (it goes black)`,
+                "aria-label": `Stop ${ch.name || ch.target}`,
                 onclick: (e) => { e.preventDefault(); stopTargets([ch.target]); },
-              }, "Stop") : el("span", { class: "pe-stop-slot" }));
+              }), STOP_ICON) : el("span", { class: "pe-stop-slot" }));
           })
         : el("div", { class: "muted small" }, c.online ? "No LED outputs reported." : "Channels appear once the board is reachable."))));
   updateButtons();

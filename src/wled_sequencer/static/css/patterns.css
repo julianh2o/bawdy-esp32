@@ -222,12 +222,16 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 2px;
+  padding: 5px 2px;
   font-size: 13px;
   cursor: pointer;
 }
-.pe-chan input { margin: 0; }
-.pe-chan .meta { margin-left: auto; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.pe-chan input { margin: 0; flex: none; }
+/* Two lines: channel name, then what's playing on it */
+.pe-chan-text { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; flex: 1; line-height: 1.3; }
+.pe-chan-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pe-chan .idle { font-size: 11px; color: var(--muted); }
+.pe-chan .meta { flex: none; font-size: 11px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .pe-chan.disabled { color: var(--muted); cursor: default; }
 .pe-chan .busy {
   font: inherit;
@@ -237,12 +241,18 @@
   border: 0;
   padding: 0;
   cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .pe-chan .busy:hover { text-decoration: underline; }
 .pe-chan .busy.err { color: var(--err); }
-.pe-chan .pe-stop { padding: 1px 7px; flex: none; }
-.pe-chan .pe-stop-slot { width: 44px; flex: none; }  /* keeps meta aligned on idle rows */
+.pe-chan .pe-stop { padding: 0; width: 26px; height: 24px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.pe-chan .pe-stop svg { display: block; }
+.pe-chan .pe-stop:hover:not(:disabled) { color: var(--err); border-color: var(--err); }
+.pe-chan .pe-stop-slot { width: 26px; flex: none; }  /* keeps meta aligned on idle rows */
+
 .pe-lights-actions { gap: 2px; }
 #stop-all-btn { padding: 0 8px; }
 #stop-all-btn svg { display: block; }
