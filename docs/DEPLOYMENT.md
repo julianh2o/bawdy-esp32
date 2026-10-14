@@ -129,11 +129,44 @@ PLATFORM=linux/amd64,linux/arm64 ./scripts/docker-build.sh --push   # multi-arch
 
 Each build is tagged `julianh2o/<image>:<version>` and `:latest`. The version defaults to `git describe --tags --always`. Pushing needs `docker login` as `julianh2o`. Override the namespace with `REGISTRY_USER=...`.
 
+## Pattern assistant (optional)
+
+The editor has a chat panel under the code where an LLM writes and edits patterns. It's off until the **web**
+container gets a model. Any OpenAI-compatible chat API works: set the variables in `.env`.
+
+```sh
+# Local Ollama (e.g. kvasir): no key
+ASSISTANT_BASE_URL=http://10.10.0.40:11434/v1
+ASSISTANT_MODEL=qwen3-8-64k:latest
+# DeepSeek's API
+ASSISTANT_BASE_URL=https://api.deepseek.com
+ASSISTANT_MODEL=deepseek-chat
+ASSISTANT_API_KEY=sk-...
+```
+
+The browser only talks to the web server (`/api/assistant/chat`), which holds the key and calls the model. Every code
+block in a reply is test-rendered in the browser with lightd's own Lua runtime. If it fails, the error is sent back to
+the model for a fix, up to twice. Nothing reaches the LEDs until you press Run.
+
+Model choice: the model needs to be good at writing code and to fit **entirely** in the GPU's memory. When part of
+it spills into system RAM, replies slow down several-fold. On kvasir's 24 GB card, the Qwen 27B model
+(`qwen3-8-64k`) passed every test prompt. It replies in about 12-30 s once loaded, at roughly 100 tokens/s, but only
+when its context is 16k. At its default 64k context it doesn't fit and takes 1.5-3 minutes. Small models (around 8B)
+write code that doesn't run. The assistant's requests use about 4k tokens, so give the Ollama model a 16k context:
+
+```sh
+# on kvasir
+ollama show qwen3-8-64k --modelfile > Modelfile   # then set: PARAMETER num_ctx 16384
+ollama create qwen-lights -f Modelfile            # and use ASSISTANT_MODEL=qwen-lights
+```
+
 ## Environment reference
 
-Compose (`.env`): `REGISTRY_USER`, `IMAGE_TAG`, `WEB_PORT`, `DAEMON_PORT`, `DAEMON_API_HOST`, `LIGHTD_FPS`, `LIGHTD_DRY_RUN`, `SIM_WEB_PORT`.
+Compose (`.env`): `REGISTRY_USER`, `IMAGE_TAG`, `WEB_PORT`, `DAEMON_PORT`, `DAEMON_API_HOST`, `LIGHTD_FPS`, `LIGHTD_DRY_RUN`, `SIM_WEB_PORT`,
+`ASSISTANT_BASE_URL`, `ASSISTANT_MODEL`, `ASSISTANT_API_KEY`.
 
-lightd: `LIGHTD_HOST`, `LIGHTD_PORT`, `LIGHTD_FPS`, `LIGHTD_DRY_RUN`, `CONTROLLERS_FILE`, `USER_PATTERNS_DIR`, `LIGHTD_STATE`, `BUILTIN_PATTERNS_DIR`, `DISCOVERY` (`false` turns mDNS off). Web: `SEQUENCER_HOST`, `SEQUENCER_PORT`, `SEQUENCES_DIR`, `ENGINE_URL`.
+lightd: `LIGHTD_HOST`, `LIGHTD_PORT`, `LIGHTD_FPS`, `LIGHTD_DRY_RUN`, `CONTROLLERS_FILE`, `USER_PATTERNS_DIR`, `LIGHTD_STATE`, `BUILTIN_PATTERNS_DIR`, `DISCOVERY` (`false` turns mDNS off). Web: `SEQUENCER_HOST`, `SEQUENCER_PORT`, `SEQUENCES_DIR`, `ENGINE_URL`, `ASSISTANT_BASE_URL`, `ASSISTANT_MODEL`,
+`ASSISTANT_API_KEY`, `ASSISTANT_TEMPERATURE` (default 0.3), `ASSISTANT_TIMEOUT` (seconds per reply, default 600).
 
 ## Not covered
 

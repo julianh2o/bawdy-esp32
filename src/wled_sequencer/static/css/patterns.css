@@ -101,6 +101,67 @@
   display: block;
 }
 
+/* ---------- assistant (chat under the editor) ---------- */
+
+.pe-assistant { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.pe-chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.pe-chat-empty { padding: 4px 0; }
+.pe-chat-msg { display: flex; }
+.pe-chat-msg.user { justify-content: flex-end; }
+.pe-chat-bubble {
+  max-width: 100%;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  overflow-wrap: anywhere;
+}
+.pe-chat-msg.user .pe-chat-bubble { max-width: 80%; background: var(--accent-soft); white-space: pre-wrap; }
+.pe-chat-msg.user.auto .pe-chat-bubble { background: var(--warn-soft); font-family: var(--mono); font-size: 12px; }
+.pe-chat-msg.user.auto .tag { margin-right: 6px; font-family: var(--font); }
+.pe-chat-msg.assistant .pe-chat-bubble { flex: 1; }
+.pe-chat-bubble p { margin: 0 0 6px; }
+.pe-chat-bubble p:last-child { margin-bottom: 0; }
+.pe-chat-bubble code { font-family: var(--mono); font-size: 12px; }
+.pe-chat-code { margin: 6px 0; display: flex; flex-direction: column; gap: 6px; }
+.pe-chat-code pre {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 260px;
+  overflow: auto;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.pe-chat-err { font-family: var(--mono); font-size: 11px; color: var(--err); min-width: 0; overflow-wrap: anywhere; }
+.pe-chat-note { font-size: 12px; color: var(--muted); text-align: center; }
+.pe-chat-note.err { color: var(--err); }
+.pe-chat-form { display: flex; gap: 8px; align-items: flex-end; }
+.pe-chat-form textarea {
+  flex: 1;
+  min-width: 0;
+  resize: vertical;
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+
 /* ---------- targets & runs ---------- */
 
 .pe-side { min-width: 0; }

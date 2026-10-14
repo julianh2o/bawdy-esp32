@@ -54,6 +54,10 @@ services:
       SEQUENCER_HOST: 0.0.0.0
       SEQUENCER_PORT: ${WEB_PORT:-8080}
       ENGINE_URL: http://127.0.0.1:${DAEMON_PORT:-8765}
+      # Pattern assistant (optional, see docs/DEPLOYMENT.md)
+      ASSISTANT_BASE_URL: ${ASSISTANT_BASE_URL:-}
+      ASSISTANT_MODEL: ${ASSISTANT_MODEL:-}
+      ASSISTANT_API_KEY: ${ASSISTANT_API_KEY:-}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:${WEB_PORT:-8080}/', timeout=2)"]
       interval: 10s

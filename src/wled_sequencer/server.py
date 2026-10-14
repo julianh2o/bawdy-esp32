@@ -1,4 +1,5 @@
-"""Web UI server: the pattern editor (/), setup page (/config) and log (/logs) as static files, plus /engine/* proxied to lightd."""
+"""Web UI server: the pattern editor (/), setup page (/config) and log (/logs) as static files, plus /engine/* proxied to
+lightd and the pattern assistant (/api/assistant, see assistant.py)."""
 
 from __future__ import annotations
 import json
@@ -10,6 +11,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
+
+from wled_sequencer.assistant import AssistantConfig, AssistantError, build_messages, stream_chat
+
+MAX_BODY = 1_000_000  # bytes accepted from the browser on /api/assistant/chat
 
 
 class SequencerHandler(BaseHTTPRequestHandler):
@@ -81,11 +86,69 @@ class SequencerHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self._try_proxy():
             return
-        self._serve_static(unquote(urlparse(self.path).path.rstrip("/")))
+        path = unquote(urlparse(self.path).path.rstrip("/"))
+        if path == "/api/assistant":
+            self._send_json(200, self.server.assistant.describe())
+            return
+        self._serve_static(path)
 
     def do_POST(self) -> None:
-        if not self._try_proxy():
-            self._send_error(404, f"Unknown endpoint: {urlparse(self.path).path}")
+        if self._try_proxy():
+            return
+        if urlparse(self.path).path.rstrip("/") == "/api/assistant/chat":
+            self._assistant_chat()
+            return
+        self._send_error(404, f"Unknown endpoint: {urlparse(self.path).path}")
+
+    # ---------- pattern assistant ----------
+
+    def _assistant_chat(self) -> None:
+        """Stream the model's reply as server-sent events: {"type": "status"|"reasoning"|"text"|"error"|"done", ...}.
+
+        Body: {"messages": [{"role", "content"}...], "source": editor code, "name": pattern name}.
+        """
+        config = self.server.assistant
+        if not config.enabled:
+            self._send_error(503, "The assistant isn't configured: set ASSISTANT_BASE_URL and ASSISTANT_MODEL on the web server.")
+            return
+        length = int(self.headers.get("Content-Length", 0))
+        if length > MAX_BODY:
+            self._send_error(413, "Request too large")
+            return
+        try:
+            body = json.loads(self.rfile.read(length) or b"{}")
+            messages = build_messages(body.get("messages") or [], str(body.get("source") or ""), str(body.get("name") or ""))
+        except (ValueError, AttributeError) as e:
+            self._send_error(400, str(e))
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")  # don't let a reverse proxy hold the stream back
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+
+        def send(event: dict[str, Any]) -> None:
+            self.wfile.write(f"data: {json.dumps(event)}\n\n".encode("utf-8"))
+            self.wfile.flush()
+
+        chunks = stream_chat(config, messages)
+        try:
+            send({"type": "status", "text": f"Waiting for {config.model}…"})
+            for chunk in chunks:
+                send(chunk)
+            send({"type": "done"})
+        except AssistantError as e:
+            try:
+                send({"type": "error", "text": str(e)})
+            except OSError:
+                pass
+        except OSError:
+            pass  # the browser went away (stop button, closed tab): drop the upstream request too
+        finally:
+            chunks.close()
 
     def do_PATCH(self) -> None:
         if not self._try_proxy():
@@ -139,9 +202,16 @@ class SequencerHandler(BaseHTTPRequestHandler):
 class SequencerServer(ThreadingHTTPServer):
     """Threading HTTP server for the static UI and the lightd proxy."""
 
-    def __init__(self, server_address: tuple[str, int], static_dir: Path, engine_url: str = "http://127.0.0.1:8765") -> None:
+    def __init__(
+        self,
+        server_address: tuple[str, int],
+        static_dir: Path,
+        engine_url: str = "http://127.0.0.1:8765",
+        assistant: AssistantConfig | None = None,
+    ) -> None:
         self.static_dir = static_dir
         self.engine_url = engine_url
+        self.assistant = assistant if assistant is not None else AssistantConfig()
         super().__init__(server_address, SequencerHandler)
 
 
@@ -154,10 +224,12 @@ class SequencerAppServer:
         port: int = 8081,
         static_dir: Path | str | None = None,
         engine_url: str = "http://127.0.0.1:8765",
+        assistant: AssistantConfig | None = None,
     ) -> None:
         self.host = host
         self.port = port
         self.engine_url = engine_url
+        self.assistant = assistant if assistant is not None else AssistantConfig()
         self.static_dir = Path(static_dir) if static_dir else Path(__file__).resolve().parent / "static"
 
         self.server: SequencerServer | None = None
@@ -170,7 +242,7 @@ class SequencerAppServer:
     def start(self) -> None:
         if self.is_running:
             return
-        self.server = SequencerServer((self.host, self.port), self.static_dir, self.engine_url)
+        self.server = SequencerServer((self.host, self.port), self.static_dir, self.engine_url, self.assistant)
         self.port = self.server.server_port
         self._thread = threading.Thread(target=self.server.serve_forever, daemon=True, name="WledSequencerServer")
         self._thread.start()
