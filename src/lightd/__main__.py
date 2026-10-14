@@ -33,7 +33,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fps", type=float, default=float(env("LIGHTD_FPS", "30")))
     parser.add_argument("--no-discovery", action="store_true", default=env("DISCOVERY", "true").lower() == "false")
     parser.add_argument("--dry-run", action="store_true", default=env("LIGHTD_DRY_RUN", "false").lower() == "true",
-                        help="don't send UDP (frames are discarded)")
+                        help="don't send anything to the boards: frames are discarded and the output switch doesn't release them "
+                             "(board info and segments are still read over HTTP)")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
     logs.setup(verbose=args.verbose)
@@ -44,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
 
         transport = FakeTransport()
     app = build(args.controllers, args.patterns, args.user_patterns, args.state, args.scenes, fps=args.fps,
-                discovery=not args.no_discovery, transport=transport)
+                discovery=not args.no_discovery, transport=transport, dry_run=args.dry_run)
     try:
         controllers = app.registry.load()
     except ConfigError as e:

@@ -24,14 +24,15 @@ def build(
     fps: float = DEFAULT_FPS,
     discovery: bool = True,
     transport: Any = None,
+    dry_run: bool = False,
 ) -> Lightd:
-    """Wire up a lightd instance (not started)."""
+    """Wire up a lightd instance (not started). ``dry_run`` also stops it changing board state over HTTP."""
     store = ControllerStore(controllers)
     browser = WledBrowser() if discovery else None
     registry = Registry(store, transport=transport, browser=browser)
     library = PatternLibrary(builtin_patterns, user_patterns)
     runs = RunManager(library, state)
-    return Lightd(store, registry, library, runs, RenderLoop(registry, runs, fps=fps), SceneStore(scenes, library))
+    return Lightd(store, registry, library, runs, RenderLoop(registry, runs, fps=fps, release=not dry_run), SceneStore(scenes, library))
 
 
 __all__ = ["ApiServer", "Lightd", "build"]

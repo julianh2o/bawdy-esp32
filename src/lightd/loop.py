@@ -35,9 +35,10 @@ def scale(data: bytes, level: float) -> bytes:
 
 
 class RenderLoop:
-    def __init__(self, registry: Registry, runs: RunManager, fps: float = DEFAULT_FPS) -> None:
+    def __init__(self, registry: Registry, runs: RunManager, fps: float = DEFAULT_FPS, release: bool = True) -> None:
         self.registry = registry
         self.runs = runs
+        self.release = release  # tell boards to leave realtime mode when output goes off (False in dry-run)
         self.fps = max(1.0, min(120.0, float(fps)))
         self.actual_fps = 0.0
         self.frames = 0
@@ -55,7 +56,8 @@ class RenderLoop:
         if not self.runs.output:
             if self._sending:
                 self._sending = False
-                self._release_all()
+                if self.release:
+                    self._release_all()
             return
         self._sending = True
         now = time.time() if now is None else now

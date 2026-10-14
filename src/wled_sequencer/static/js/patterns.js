@@ -863,8 +863,9 @@ async function pollStatus() {
   try {
     const s = await api("GET", "/status");
     S.online = true;
-    pill.className = "pill ok";
-    pill.textContent = `lightd · ${Math.round(s.actual_fps)} fps · ${s.controllers.online}/${s.controllers.total} online`;
+    // With the switch's label gone, the pill says when output is off (boards showing their own WLED effects).
+    pill.className = s.output === false ? "pill warn" : "pill ok";
+    pill.textContent = `lightd · ${s.output === false ? "output off" : `${Math.round(s.actual_fps)} fps`} · ${s.controllers.online}/${s.controllers.total} online`;
     showOutput(s.output);
   } catch {
     S.online = false;
