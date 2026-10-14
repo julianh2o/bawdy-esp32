@@ -35,15 +35,24 @@
         <h2 id="scenes-heading">Scenes</h2>
       </div>
       <div id="scene-list" class="pe-list" aria-labelledby="scenes-heading"></div>
+      <!-- Narrow screens: the lists collapse into dropdowns; the picked scene's actions sit to the right. -->
+      <div class="pe-pick">
+        <select id="scene-select" aria-label="Scene"></select>
+        <span id="scene-actions" class="pe-pick-actions"></span>
+      </div>
 
       <div class="column-head pe-library-head">
         <h2 id="library-heading">Library</h2>
         <button id="new-btn" class="btn btn-small" title="Start a new pattern">+ New</button>
       </div>
       <div id="library-list" class="pe-list"></div>
+      <div class="pe-pick">
+        <select id="library-select" aria-label="Open a pattern"></select>
+      </div>
     </aside>
 
     <section class="pe-editor" aria-labelledby="editor-heading">
+      <button id="code-toggle" type="button" class="pe-code-toggle" aria-expanded="false" aria-controls="editor"></button>
       <div class="pe-editor-head">
         <h2 id="editor-heading" class="sr-only">Editor</h2>
         <input type="text" id="name-input" placeholder="pattern-name" aria-label="Pattern name" spellcheck="false">
@@ -93,8 +102,13 @@
 
     <aside class="pe-side" aria-labelledby="targets-heading">
       <div class="column-head">
-        <h2 id="targets-heading">Run on</h2>
-        <button id="refresh-btn" class="btn btn-small btn-ghost" title="Reload controllers">↻</button>
+        <h2 id="targets-heading">Lights</h2>
+        <span class="row pe-lights-actions">
+          <button id="save-scene-btn" class="btn btn-small" title="Save everything playing now (patterns, params, brightness) as a scene">Save as scene…</button>
+          <button id="stop-all-btn" class="btn btn-small btn-ghost btn-danger" title="Stop everything; all channels go black" aria-label="Stop all"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor"
+            stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v4.5M9.2 6.5v4.5"/></svg></button>
+          <button id="refresh-btn" class="btn btn-small btn-ghost" title="Reload controllers" aria-label="Reload controllers">↻</button>
+        </span>
       </div>
       <div id="targets-list" class="stack"></div>
 
@@ -108,16 +122,6 @@
         <button id="run-btn" class="btn btn-primary" disabled>Run on selected</button>
       </div>
       <p id="run-hint" class="muted small"></p>
-
-      <div class="column-head pe-runs-head">
-        <h2>Running</h2>
-        <span class="row">
-          <button id="stop-all-btn" class="btn btn-small btn-ghost btn-danger" title="Stop everything; all channels go black" aria-label="Stop all runs"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor"
-            stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v4.5M9.2 6.5v4.5"/></svg></button>
-          <button id="save-scene-btn" class="btn btn-small" title="Save everything playing now (patterns, params, brightness) as a scene">Save as scene…</button>
-        </span>
-      </div>
-      <div id="runs-list" class="stack"></div>
     </aside>
   </main>
 

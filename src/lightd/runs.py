@@ -157,6 +157,26 @@ class RunManager:
         log.info("Run %s stopped", run_id)
         self.save()
 
+    def stop_targets(self, targets: Any) -> list[str]:
+        """Take channels out of whatever runs play on them (a run left with no channels ends); they go black.
+
+        Returns the targets that were playing. Other channels of the same runs keep going.
+        """
+        parsed = parse_targets(targets)
+        stopped: list[str] = []
+        with self._lock:
+            for run in list(self._runs.values()):
+                keep = [t for t in run.targets if t not in parsed]
+                stopped += [str(t) for t in run.targets if t in parsed]
+                if not keep:
+                    del self._runs[run.id]
+                elif len(keep) != len(run.targets):
+                    run.targets = keep
+        if stopped:
+            log.info("Stopped %s", ", ".join(stopped))
+            self.save()
+        return stopped
+
     def stop_all(self) -> None:
         with self._lock:
             self._runs.clear()

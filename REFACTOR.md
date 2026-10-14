@@ -179,6 +179,7 @@ Channel lengths are not stored here; they come from the board.
 | PATCH / PUT | `/api/values` | `{values: {k: v}}`: merge (null deletes) / replace all |
 | DELETE | `/api/values` | clear every value |
 | GET/PUT/DELETE | `/api/values/{key}` | read / set (`{value}`) / remove one value |
+| POST | `/api/stop` | `{targets: [...]}`: take channels out of their runs (they go black); other channels keep playing |
 | POST | `/api/blackout` | stop all runs |
 
 ### Layout

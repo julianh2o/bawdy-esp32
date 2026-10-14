@@ -35,6 +35,7 @@ curl -X POST $API/runs -H 'Content-Type: application/json' \
 
 curl -X PATCH  $API/runs/<id> -d '{"params": {"speed": 0.5}}'   # change params live
 curl -X DELETE $API/runs/<id>                                   # stop one run (its channels go black)
+curl -X POST   $API/stop -d '{"targets": ["wled_01/2"]}'                 # stop just these channels; the rest of their runs keep playing
 curl -X POST   $API/blackout                                    # stop everything
 
 curl -X PUT $API/brightness -d '{"targets": ["wled_01/3"], "brightness": 0.4}'   # per channel, 0..1
