@@ -1,7 +1,7 @@
 /**
  * The "Output" switch in the top bar: off = lightd sends nothing, so the boards show their own WLED effects.
  *
- * Markup: <label class="switch"><input type="checkbox" id="output-toggle" role="switch"> <span>Output</span></label>
+ * Markup: <label class="switch"><input type="checkbox" id="output-toggle" role="switch" aria-label="Output"></label>
  */
 
 const $ = (id) => document.getElementById(id);
