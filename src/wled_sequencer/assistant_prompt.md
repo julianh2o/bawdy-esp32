@@ -43,6 +43,10 @@ Each entry: `name = { type = ..., default = ..., ... }`. Types:
 - `"choice"`: `options = {"a", "b"}`, default one of them; `p.name` is the chosen string.
 - `"api"`: a live value set from outside (e.g. audio level). Only use it if the user asks for external input.
   It may be `nil` or any JSON shape, so guard it: `local level = p.level or 0`.
+  Live values reach a pattern **only** through a declared `type = "api"` param; reading `p["some.key"]` without
+  declaring one always gives nil. The param reads the key with its own name unless you set `key`. So for a value
+  named `audio.level`, declare it like this and read it as `p.level`:
+  `level = { type = "api", key = "audio.level", default = 0 }`
 Give params readable `label`s and sensible defaults so the pattern looks good untouched. Expose the obvious knobs
 (colors, speed, size) as params instead of hard-coding them.
 

@@ -140,7 +140,7 @@ ASSISTANT_BASE_URL=http://10.10.0.40:11434/v1
 ASSISTANT_MODEL=qwen3-8-64k:latest
 # DeepSeek's API
 ASSISTANT_BASE_URL=https://api.deepseek.com
-ASSISTANT_MODEL=deepseek-chat
+ASSISTANT_MODEL=deepseek-flash
 ASSISTANT_API_KEY=sk-...
 ```
 
@@ -149,24 +149,35 @@ block in a reply is test-rendered in the browser with lightd's own Lua runtime. 
 the model for a fix, up to twice. Nothing reaches the LEDs until you press Run.
 
 Model choice: the model needs to be good at writing code and to fit **entirely** in the GPU's memory. When part of
-it spills into system RAM, replies slow down several-fold. On kvasir's 24 GB card, the Qwen 27B model
-(`qwen3-8-64k`) passed every test prompt. It replies in about 12-30 s once loaded, at roughly 100 tokens/s, but only
-when its context is 16k. At its default 64k context it doesn't fit and takes 1.5-3 minutes. Small models (around 8B)
-write code that doesn't run. The assistant's requests use about 4k tokens, so give the Ollama model a 16k context:
+it spills into system RAM, replies slow down. On kvasir's 24 GB card, Qwen3.8 27B (`qwen3-8-64k`) passed every test
+prompt. Small models (around 8B) write code that doesn't run.
+
+**Turn its thinking down.** Qwen3.8 thinks at its maximum level by default, which made replies take 20-180 s.
+`ASSISTANT_REASONING_EFFORT` sets `reasoning_effort` on each request; Ollama honours it, and `think: false` is
+ignored. Measured on the 5 test prompts, every result correct:
+
+| Effort | Reply time | Notes |
+|---|---|---|
+| default (max) | 19-180 s | |
+| `low` | 7-20 s | Recommended: a little planning for trickier requests |
+| `none` | 4-12 s | No thinking at all |
+
+The OpenAI-compatible endpoint can't set the context length, so Ollama loads the model at its own default (64k for
+`qwen3-8-64k`). That spills about 1.4 GB into system RAM and costs about 25% speed (78 vs 105 tokens/s at 16k). A
+copy with a 16k context, which is plenty for the assistant's ~4k-token requests, fits entirely on the GPU:
 
 ```sh
-# on kvasir
-ollama show qwen3-8-64k --modelfile > Modelfile   # then set: PARAMETER num_ctx 16384
-ollama create qwen-lights -f Modelfile            # and use ASSISTANT_MODEL=qwen-lights
+curl http://10.10.0.40:11434/api/create -d '{"model": "qwen-lights", "from": "qwen3-8-64k:latest", "parameters": {"num_ctx": 16384}}'
+# then ASSISTANT_MODEL=qwen-lights
 ```
 
 ## Environment reference
 
 Compose (`.env`): `REGISTRY_USER`, `IMAGE_TAG`, `WEB_PORT`, `DAEMON_PORT`, `DAEMON_API_HOST`, `LIGHTD_FPS`, `LIGHTD_DRY_RUN`, `SIM_WEB_PORT`,
-`ASSISTANT_BASE_URL`, `ASSISTANT_MODEL`, `ASSISTANT_API_KEY`.
+`ASSISTANT_BASE_URL`, `ASSISTANT_MODEL`, `ASSISTANT_API_KEY`, `ASSISTANT_REASONING_EFFORT`.
 
 lightd: `LIGHTD_HOST`, `LIGHTD_PORT`, `LIGHTD_FPS`, `LIGHTD_DRY_RUN`, `CONTROLLERS_FILE`, `USER_PATTERNS_DIR`, `LIGHTD_STATE`, `BUILTIN_PATTERNS_DIR`, `DISCOVERY` (`false` turns mDNS off). Web: `SEQUENCER_HOST`, `SEQUENCER_PORT`, `SEQUENCES_DIR`, `ENGINE_URL`, `ASSISTANT_BASE_URL`, `ASSISTANT_MODEL`,
-`ASSISTANT_API_KEY`, `ASSISTANT_TEMPERATURE` (default 0.3), `ASSISTANT_TIMEOUT` (seconds per reply, default 600).
+`ASSISTANT_API_KEY`, `ASSISTANT_TEMPERATURE` (default 0.3), `ASSISTANT_TIMEOUT` (seconds per reply, default 600), `ASSISTANT_REASONING_EFFORT` (`none`/`low`/`medium`/`high`).
 
 ## Not covered
 

@@ -68,7 +68,9 @@ class TestBuildMessages(unittest.TestCase):
         self.assertTrue(cfg.enabled)
         self.assertEqual(cfg.base_url, "http://x:11434/v1")
         self.assertEqual(cfg.describe(), {"enabled": True, "model": "m", "provider": "x"})
+        self.assertEqual(cfg.reasoning_effort, "")
         self.assertFalse(AssistantConfig.from_env({}).enabled)
+        self.assertEqual(AssistantConfig.from_env({"ASSISTANT_REASONING_EFFORT": " Low "}).reasoning_effort, "low")
 
 
 class TestAssistantServer(unittest.TestCase):
@@ -112,7 +114,13 @@ class TestAssistantServer(unittest.TestCase):
         self.assertEqual(sent["auth"], "Bearer sk-1")
         self.assertEqual(sent["body"]["model"], "test-model")
         self.assertTrue(sent["body"]["stream"])
+        self.assertNotIn("reasoning_effort", sent["body"])  # unset: the model's default
         self.assertIn("-- old", sent["body"]["messages"][-1]["content"])
+
+    def test_reasoning_effort_is_sent(self):
+        cfg = AssistantConfig(base_url=self.cfg.base_url, model="m", reasoning_effort="low")
+        list(stream_chat(cfg, [{"role": "user", "content": "hi"}]))
+        self.assertEqual(_FakeLLM.requests[-1]["body"]["reasoning_effort"], "low")
 
     def test_provider_error_becomes_error_event(self):
         _FakeLLM.status = 404

@@ -8,6 +8,8 @@ Configured with environment variables (or the matching ``sequencer.py`` flags):
     ASSISTANT_MODEL      model name, e.g. qwen3-coder:30b or deepseek-chat
     ASSISTANT_API_KEY    bearer token, if the provider needs one (Ollama doesn't)
     ASSISTANT_TIMEOUT    seconds a whole reply may take before it's cut off (default 600)
+    ASSISTANT_REASONING_EFFORT  how hard a thinking model thinks: none, low, medium or high; unset = the model's
+                         default. Sent as ``reasoning_effort``, which Ollama and DeepSeek both accept.
 
 The browser never sees the key or the provider URL: it posts the conversation and the editor's code to
 ``/api/assistant/chat`` and gets the reply streamed back as server-sent events.
@@ -43,6 +45,7 @@ class AssistantConfig:
     api_key: str = ""
     temperature: float = 0.3
     timeout: float = 600.0  # whole reply, including thinking; stops a model stuck in a reasoning loop
+    reasoning_effort: str = ""  # "" leaves the model's default
 
     @property
     def enabled(self) -> bool:
@@ -57,6 +60,7 @@ class AssistantConfig:
             api_key=(env.get("ASSISTANT_API_KEY") or "").strip(),
             temperature=float(env.get("ASSISTANT_TEMPERATURE") or 0.3),
             timeout=float(env.get("ASSISTANT_TIMEOUT") or 600),
+            reasoning_effort=(env.get("ASSISTANT_REASONING_EFFORT") or "").strip().lower(),
         )
 
     def describe(self) -> dict[str, Any]:
@@ -126,12 +130,15 @@ def stream_chat(config: AssistantConfig, messages: list[dict[str, str]]) -> Iter
     """
     if not config.enabled:
         raise AssistantError("The assistant isn't configured (set ASSISTANT_BASE_URL and ASSISTANT_MODEL).")
-    body = json.dumps({
+    payload: dict[str, Any] = {
         "model": config.model,
         "messages": messages,
         "stream": True,
         "temperature": config.temperature,
-    }).encode("utf-8")
+    }
+    if config.reasoning_effort:
+        payload["reasoning_effort"] = config.reasoning_effort
+    body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(f"{config.base_url}/chat/completions", data=body, method="POST")
     req.add_header("Content-Type", "application/json")
     req.add_header("Accept", "text/event-stream")
