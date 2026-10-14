@@ -137,7 +137,7 @@ container gets a model. Any OpenAI-compatible chat API works: set the variables 
 ```sh
 # Local Ollama (e.g. kvasir): no key
 ASSISTANT_BASE_URL=http://10.10.0.40:11434/v1
-ASSISTANT_MODEL=qwen3-8-64k:latest
+ASSISTANT_MODEL=qwen-lights
 # DeepSeek's API
 ASSISTANT_BASE_URL=https://api.deepseek.com
 ASSISTANT_MODEL=deepseek-flash
@@ -168,7 +168,7 @@ copy with a 16k context, which is plenty for the assistant's ~4k-token requests,
 
 ```sh
 curl http://10.10.0.40:11434/api/create -d '{"model": "qwen-lights", "from": "qwen3-8-64k:latest", "parameters": {"num_ctx": 16384}}'
-# then ASSISTANT_MODEL=qwen-lights
+# then ASSISTANT_MODEL=qwen-lights (already created on kvasir)
 ```
 
 ## Environment reference
