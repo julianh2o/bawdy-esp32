@@ -418,6 +418,13 @@ class TestLoop(RunsTest):
         self.loop.step()
         self.assertEqual(payloads(self.tx.sent)[:3], b"\xff\x00\x00")
 
+    def test_dry_run_loop_never_releases_boards(self):
+        loop = RenderLoop(self.registry, self.runs, release=False)
+        self.runs.set_output(False)
+        loop.step()
+        time.sleep(0.05)
+        self.assertEqual(self.registry.get("a").controller.http.posted, [])
+
     def test_error_keeps_last_good_frame_and_reports(self):
         run = self.runs.start(["a/1"], source="function pixel(n, t, p) if t > 1005 then error('late') end return 1, 0, 0 end")
         self.loop.step(now=1000.0)
