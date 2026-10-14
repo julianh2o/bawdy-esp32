@@ -27,6 +27,7 @@ curl -X POST $API/controllers/refresh  # re-read every board's segments and pixe
 curl $API/patterns                    # library with each pattern's params schema
 curl $API/runs                        # what's playing
 curl "$API/logs?level=warning&limit=100"   # recent log (also ?since=<seq>, ?format=text); web view at /logs
+curl https://lights.julianverse.net/clock   # current Unix time, 2 decimals, plain text (e.g. 1760000000.12); the t patterns see
 
 # Play a library pattern (params are optional; unknown ones fall back to defaults)
 curl -X POST $API/runs -H 'Content-Type: application/json' \

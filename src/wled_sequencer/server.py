@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -90,7 +91,24 @@ class SequencerHandler(BaseHTTPRequestHandler):
         if path == "/api/assistant":
             self._send_json(200, self.server.assistant.describe())
             return
+        if path == "/clock":
+            self._send_clock()
+            return
         self._serve_static(path)
+
+    def _send_clock(self) -> None:
+        """Current Unix time in seconds, 2 decimals, as plain text (e.g. "1760000000.12"), for syncing clients.
+
+        Same host clock lightd uses for patterns' t (both containers run on the same machine).
+        """
+        payload = f"{time.time():.2f}".encode("ascii")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self._send_cors()
+        self.end_headers()
+        self.wfile.write(payload)
 
     def do_POST(self) -> None:
         if self._try_proxy():

@@ -91,13 +91,26 @@ function check(code) {
 
 function checkLabel(result) {
   if (result === null) return el("span", { class: "tag" }, "not checked");
-  if (result === "") return el("span", { class: "tag ok", title: "Compiles and renders with the default params" }, "works");
+  if (result === "") return el("span", { class: "tag ok", title: "Compiles and renders with the default params" }, "no errors detected");
   return el("span", { class: "tag err", title: result }, "error");
 }
 
-function codeBlock(part, { final, streaming }) {
+// Which code blocks the user has expanded, per message (the log is rebuilt on every streamed chunk).
+const expanded = new WeakMap(); // message -> Set of block indexes
+
+function codeBlock(part, { final, streaming, msg, index }) {
   const wrap = el("div", { class: "pe-chat-code" });
-  wrap.append(el("pre", {}, el("code", {}, part.code)));
+  const lines = part.code.replace(/\n$/, "").split("\n").length;
+  const open = expanded.get(msg)?.has(index) ?? false;
+  const label = !part.closed ? `Writing code… (${lines} line${lines === 1 ? "" : "s"})`
+    : `${isLua(part) ? "Lua code" : part.lang || "Code"} (${lines} line${lines === 1 ? "" : "s"})`;
+  const details = el("details", { class: "pe-chat-details" }, el("summary", {}, label), el("pre", {}, el("code", {}, part.code)));
+  details.open = open;
+  details.addEventListener("toggle", () => {
+    if (!expanded.has(msg)) expanded.set(msg, new Set());
+    details.open ? expanded.get(msg).add(index) : expanded.get(msg).delete(index);
+  });
+  wrap.append(details);
   if (!isLua(part) || !part.closed || streaming) return wrap;
 
   const result = check(part.code);
@@ -136,7 +149,7 @@ function messageNode(m, { streaming = false } = {}) {
   const lastLua = parts.map((p, i) => (isLua(p) ? i : -1)).filter((i) => i >= 0).pop();
   parts.forEach((part, i) => {
     if (part.kind === "text") body.append(...prose(part.text));
-    else body.append(codeBlock(part, { final: i === lastLua, streaming }));
+    else body.append(codeBlock(part, { final: i === lastLua, streaming, msg: m, index: i }));
   });
   if (streaming && visible && m.status) body.append(el("div", { class: "muted small" }, m.status));
   return el("div", { class: "pe-chat-msg assistant" }, body);
@@ -262,7 +275,8 @@ export async function initAssistant(hooks) {
     render();
   });
   try {
-    $("assistant-autoapply").checked = localStorage.getItem("lightd.assistant.autoapply") === "1";
+    // On by default; only an explicit uncheck (stored "0") turns it off.
+    $("assistant-autoapply").checked = localStorage.getItem("lightd.assistant.autoapply") !== "0";
   } catch { /* storage unavailable */ }
   $("assistant-autoapply").addEventListener("change", (e) => {
     try { localStorage.setItem("lightd.assistant.autoapply", e.target.checked ? "1" : "0"); } catch { /* ignore */ }
