@@ -200,6 +200,9 @@ def _route(app: Lightd, method: str, path: str, body: dict[str, Any], query: dic
     if head == "values":
         return _values(app, method, parts[1:], body)
 
+    if head == "stop" and method == "POST":
+        return 200, {"status": "ok", "stopped": app.runs.stop_targets(body.get("targets"))}
+
     if head == "blackout" and method == "POST":
         app.runs.stop_all()
         log.info("Blackout: all runs stopped")

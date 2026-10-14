@@ -47,6 +47,7 @@ const S = {
   runs: [],
   selected: new Set(),
   scenes: [],
+  scenePick: "", // the scene picked in the narrow-screen dropdown
   online: false,
   schema: {}, // params declared by the editor's code (last version that compiled)
   params: {}, // values set in the Params panel; unset params use the schema default
@@ -81,6 +82,17 @@ const $ = (id) => document.getElementById(id);
 function icon(node, svg) {
   node.innerHTML = svg;
   return node;
+}
+
+// Fill a <select> with [{value, label}], keeping the user's choice. Rebuilt only when the options change, so the
+// 2-second poll doesn't close a dropdown someone has open.
+function syncSelect(select, options, value) {
+  const sig = JSON.stringify(options);
+  if (select.dataset.sig !== sig) {
+    select.replaceChildren(...options.map((o) => el("option", { value: o.value, disabled: o.disabled }, o.label)));
+    select.dataset.sig = sig;
+  }
+  select.value = value;
 }
 
 async function api(method, path, body) {
@@ -323,6 +335,15 @@ function renderLibrary() {
     el("div", { class: "pe-group" }, "Built-in"),
     ...builtin.map(item),
   );
+  // Narrow screens: the same library as a dropdown; picking a pattern opens it.
+  const label = (p) => `${p.name}${p.modified ? " (edited)" : ""}${p.error ? " (error)" : ""}`;
+  const select = $("library-select");
+  const options = [
+    { value: "", label: S.current.saved === null ? "New pattern (unsaved)" : "Open a pattern…", disabled: true },
+    ...mine.map((p) => ({ value: p.name, label: label(p) })),
+    ...builtin.map((p) => ({ value: p.name, label: `${label(p)} · built-in` })),
+  ];
+  syncSelect(select, options, S.current.saved !== null && S.library.some((p) => p.name === S.current.name) ? S.current.name : "");
 }
 
 function confirmDiscard() {
@@ -425,6 +446,23 @@ function updateButtons() {
     ? "Unsaved code runs as-is, but only saved patterns can go in a scene." : "";
   $("save-scene-btn").disabled = !S.runs.some((r) => r.pattern) || !S.online;
   $("stop-all-btn").disabled = !S.runs.length || !S.online;
+  updateCodeToggle();
+}
+
+// Narrow screens: the code editor starts collapsed under the assistant.
+function updateCodeToggle() {
+  const open = $("editor").closest(".pe-editor").classList.contains("code-open");
+  const name = $("name-input").value.trim() || "unsaved pattern";
+  $("code-toggle").replaceChildren(
+    el("span", {}, open ? "▾" : "▸"), "Code",
+    el("span", { class: "muted" }, `· ${name}${isDirty() ? " · unsaved changes" : ""}`));
+  $("code-toggle").setAttribute("aria-expanded", String(open));
+}
+
+function toggleCode() {
+  $("editor").closest(".pe-editor").classList.toggle("code-open");
+  updateCodeToggle();
+  editor.refresh(); // CodeMirror measures nothing while hidden
 }
 
 // ---------- controllers & runs ----------
@@ -481,10 +519,14 @@ function renderTargets() {
                 },
               }),
               el("span", {}, ch.name || ch.segment_name || `Ch ${ch.number}`),
-              run ? el("span", { class: "busy", title: "Playing now" }, `▶ ${run.pattern || "editor"}`) : null,
+              run ? playingTag(run) : null,
               el("span", { class: "meta" }, usable
                 ? `${ch.length} px${ch.linked ? " + white" : ch.rgbw ? " · RGBW" : ""}${ch.reversed ? " · rev" : ""}${ch.brightness < 1 ? ` · ${Math.round(ch.brightness * 100)}%` : ""}`
-                : "not on board"));
+                : "not on board"),
+              run ? el("button", {
+                class: "btn btn-small pe-stop", type: "button", title: `Stop ${run.pattern || "editor code"} on this channel (it goes black)`,
+                onclick: (e) => { e.preventDefault(); stopTargets([ch.target]); },
+              }, "Stop") : el("span", { class: "pe-stop-slot" }));
           })
         : el("div", { class: "muted small" }, c.online ? "No LED outputs reported." : "Channels appear once the board is reachable."))));
   updateButtons();
@@ -596,28 +638,6 @@ async function loadRuns() {
   } catch {
     S.runs = [];
   }
-  renderRuns();
-}
-
-function renderRuns() {
-  const list = $("runs-list");
-  if (!S.runs.length) {
-    list.replaceChildren(el("div", { class: "muted small" }, "Nothing running. Idle channels are black."));
-    return;
-  }
-  list.replaceChildren(...S.runs.map((r) =>
-    el("div", { class: "card pe-run" },
-      el("div", { class: "pe-run-top" },
-        el("strong", {}, r.pattern || "editor code"),
-        r.error ? el("span", { class: "tag err" }, "error") : null,
-        el("span", { class: "spacer" }),
-        r.pattern ? el("button", {
-          class: "btn btn-small btn-ghost", title: "Load this run's pattern, channels and params into the editor",
-          onclick: () => editRun(r),
-        }, "Edit") : null,
-        el("button", { class: "btn btn-small", onclick: () => stopRun(r.id) }, "Stop")),
-      el("div", { class: "targets" }, r.targets.map(targetLabel).join(", ")),
-      r.error ? el("div", { class: "err" }, r.error.message) : null)));
 }
 
 function targetLabel(target) {
@@ -656,9 +676,21 @@ async function runSelected() {
   }
 }
 
-async function stopRun(id) {
+// "▶ pattern" on a playing channel; for a library pattern it loads the run into the editor (channels and params).
+function playingTag(run) {
+  const label = `▶ ${run.pattern || "editor code"}`;
+  const title = run.error ? `Error: ${run.error.message}` : run.pattern ? "Playing now. Click to edit this run" : "Playing now";
+  if (!run.pattern) return el("span", { class: `busy${run.error ? " err" : ""}`, title }, label);
+  return el("button", {
+    class: `busy${run.error ? " err" : ""}`, type: "button", title,
+    onclick: (e) => { e.preventDefault(); editRun(run); },
+  }, label);
+}
+
+// Stop just these channels; other channels of the same run keep playing.
+async function stopTargets(targets) {
   try {
-    await api("DELETE", `/runs/${id}`);
+    await api("POST", "/stop", { targets });
   } catch (e) {
     banner(`Could not stop: ${e.message}`, "err");
   }
@@ -695,7 +727,33 @@ function renderScenes() {
         onclick: () => deleteScene(sc.name),
       }, "×")));
   $("scene-list").replaceChildren(...(items.length ? items
-    : [el("div", { class: "muted small" }, "None yet. Run patterns, then “Save as scene” under Running.")]));
+    : [el("div", { class: "muted small" }, "None yet. Run patterns, then “Save as scene” under Lights.")]));
+  renderScenePick();
+}
+
+// Narrow screens: scenes as a dropdown, with the picked scene's buttons to its right.
+function renderScenePick() {
+  if (S.scenePick && !S.scenes.some((sc) => sc.name === S.scenePick)) S.scenePick = "";
+  const options = [
+    { value: "", label: S.scenes.length ? "Pick a scene…" : "No scenes yet", disabled: true },
+    ...S.scenes.map((sc) => ({ value: sc.name, label: `${sc.name}${sc.active ? " · active" : ""}` })),
+  ];
+  syncSelect($("scene-select"), options, S.scenePick || "");
+  const name = S.scenePick;
+  const actions = $("scene-actions");
+  if (actions.dataset.for === (name || "")) return; // keep the buttons (and focus) across polls
+  actions.dataset.for = name || "";
+  if (!name) { actions.replaceChildren(); return; }
+  actions.replaceChildren(
+    el("button", { class: "btn btn-small btn-primary", title: `Activate ${name}`, onclick: () => activateScene(name) }, "▶ Play"),
+    icon(el("button", {
+      class: "btn btn-small btn-ghost", title: `Overwrite ${name} with what's playing now`,
+      "aria-label": `Overwrite ${name} with what's playing now`, onclick: () => overwriteScene(name),
+    }), SAVE_ICON),
+    el("button", {
+      class: "btn btn-small btn-ghost btn-danger", title: `Delete ${name}`, "aria-label": `Delete ${name}`,
+      onclick: () => deleteScene(name),
+    }, "×"));
 }
 
 async function activateScene(name) {
@@ -864,6 +922,12 @@ async function bootstrap() {
   $("preview-play").addEventListener("click", togglePlay);
   $("save-scene-btn").addEventListener("click", saveAsScene);
   $("params-reset").addEventListener("click", resetParams);
+  $("code-toggle").addEventListener("click", toggleCode);
+  $("library-select").addEventListener("change", async (e) => {
+    const name = e.target.value;
+    if (!(await openPattern(name))) renderLibrary(); // cancelled: put the dropdown back
+  });
+  $("scene-select").addEventListener("change", (e) => { S.scenePick = e.target.value; renderScenePick(); });
   window.addEventListener("beforeunload", (e) => { if (isDirty()) e.preventDefault(); });
 
   const prefs = loadPrefs();

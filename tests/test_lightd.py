@@ -294,6 +294,15 @@ class TestRuns(RunsTest):
         self.assertEqual(restored.restore(), [])
         self.assertEqual(restored.brightness(Target("a", 0)), 0.25)
 
+    def test_stop_targets_leaves_other_channels_playing(self):
+        r1 = self.runs.start(["a/1", "a/2"], source=RED)
+        self.runs.start(["a/3"], pattern="solid")
+        self.assertEqual(self.runs.stop_targets(["a/2"]), ["a/2"])
+        self.assertEqual([str(t) for t in r1.targets], ["a/1"])
+        self.assertEqual(self.runs.stop_targets(["a/1", "a/3"]), ["a/1", "a/3"])
+        self.assertEqual(self.runs.runs(), [])  # both runs ended with no channels left
+        self.assertEqual(self.runs.stop_targets(["a/1"]), [])  # nothing playing: no-op
+
     def test_bad_requests(self):
         with self.assertRaises(ValueError):
             self.runs.start(["a/1"])
@@ -604,6 +613,14 @@ class TestApi(RunsTest):
         self.assertEqual(self.call("DELETE", "/api/patterns/rainbow")[0], 409)
         status, text = self.call("GET", "/api/runtime.lua")
         self.assertIn("function M.render_hex", text)
+
+    def test_stop_endpoint(self):
+        self.call("POST", "/api/runs", {"targets": ["a/1", "a/2"], "source": RED})
+        status, res = self.call("POST", "/api/stop", {"targets": ["a/2"]})
+        self.assertEqual((status, res["stopped"]), (200, ["a/2"]))
+        (run,) = self.call("GET", "/api/runs")[1]["runs"]
+        self.assertEqual(run["targets"], ["a/1"])
+        self.assertEqual(self.call("POST", "/api/stop", {})[0], 400)
 
     def test_blackout_status_and_identify(self):
         self.call("POST", "/api/runs", {"targets": ["a/1"], "source": RED})
