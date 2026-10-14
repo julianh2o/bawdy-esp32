@@ -61,6 +61,16 @@ class TestWebServer(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body), {"path": "/api/status?x=1"})
 
+    def test_clock(self) -> None:
+        import time
+
+        before = time.time()
+        status, body = self.get("/clock")
+        self.assertEqual(status, 200)
+        self.assertRegex(body, r"^\d+\.\d{2}$")
+        self.assertAlmostEqual(float(body), before, delta=2)
+        self.assertRegex(self.get("/clock/")[1], r"^\d+\.\d{2}$")  # trailing slash works too
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -145,6 +145,15 @@
   font-size: 12px;
   line-height: 1.4;
 }
+.pe-chat-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  user-select: none;
+  padding: 2px 0;
+}
+.pe-chat-details summary:hover { color: var(--text); }
+.pe-chat-details[open] summary { margin-bottom: 6px; }
 .pe-chat-err { font-family: var(--mono); font-size: 11px; color: var(--err); min-width: 0; overflow-wrap: anywhere; }
 .pe-chat-note { font-size: 12px; color: var(--muted); text-align: center; }
 .pe-chat-note.err { color: var(--err); }
