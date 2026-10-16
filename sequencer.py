@@ -96,10 +96,13 @@ def run_java_gui(engine_url: str, console: Console) -> None:
 def run_web_app(args: argparse.Namespace, console: Console) -> None:
     import webbrowser
     from wled_sequencer.assistant import AssistantConfig
+    from wled_sequencer.dashboard import Dashboard
     from wled_sequencer.server import SequencerAppServer
 
     assistant = AssistantConfig.from_env()
-    app_server = SequencerAppServer(host=args.host, port=args.port, engine_url=args.engine, assistant=assistant)
+    dashboard = Dashboard.from_env(args.engine)
+    app_server = SequencerAppServer(host=args.host, port=args.port, engine_url=args.engine, assistant=assistant,
+                                    dashboard=dashboard)
     app_server.start()
 
     url = f"http://{args.host}:{app_server.port}"
@@ -108,9 +111,14 @@ def run_web_app(args: argparse.Namespace, console: Console) -> None:
     console.print("[bold yellow]══════════════════════════════════════════════════════════════[/bold yellow]")
     console.print("[bold cyan]       Lights web UI                                           [/bold cyan]")
     console.print("[bold yellow]══════════════════════════════════════════════════════════════[/bold yellow]")
-    console.print(f"  • Patterns:      [bold green]{url}[/bold green]")
+    console.print(f"  • Dashboard:     [bold green]{url}[/bold green]")
+    console.print(f"  • Patterns:      [bold green]{url}/interface[/bold green]")
     console.print(f"  • Setup:         [bold green]{url}/config[/bold green]")
     console.print(f"  • Engine Target: [cyan]{args.engine}[/cyan]")
+    if dashboard.ha_enabled:
+        console.print(f"  • Home Assistant: [cyan]{dashboard.ha_url}[/cyan]")
+    else:
+        console.print("  • Home Assistant: [dim]off (set HA_URL and HA_TOKEN)[/dim]")
     if assistant.enabled:
         console.print(f"  • Assistant:     [cyan]{assistant.model}[/cyan] at {assistant.base_url}")
     else:

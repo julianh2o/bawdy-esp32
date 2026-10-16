@@ -1,5 +1,6 @@
-"""Web UI server: the pattern editor (/), setup page (/config) and log (/logs) as static files, plus /engine/* proxied to
-lightd and the pattern assistant (/api/assistant, see assistant.py)."""
+"""Web UI server: the dashboard (/), pattern editor (/interface), setup page (/config) and log (/logs) as static files,
+plus /engine/* proxied to lightd, the dashboard API (/api/dashboard, see dashboard.py) and the pattern assistant
+(/api/assistant, see assistant.py)."""
 
 from __future__ import annotations
 import json
@@ -14,6 +15,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from wled_sequencer.assistant import AssistantConfig, AssistantError, build_messages, stream_chat
+from wled_sequencer.dashboard import Dashboard, DashboardError
 
 MAX_BODY = 1_000_000  # bytes accepted from the browser on /api/assistant/chat
 
@@ -81,8 +83,11 @@ class SequencerHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_PUT(self) -> None:
-        if not self._try_proxy():
-            self._send_error(404, f"Unknown endpoint: {urlparse(self.path).path}")
+        if self._try_proxy():
+            return
+        if self._dashboard_route("PUT"):
+            return
+        self._send_error(404, f"Unknown endpoint: {urlparse(self.path).path}")
 
     def do_GET(self) -> None:
         if self._try_proxy():
@@ -93,6 +98,8 @@ class SequencerHandler(BaseHTTPRequestHandler):
             return
         if path == "/clock":
             self._send_clock()
+            return
+        if self._dashboard_route("GET"):
             return
         self._serve_static(path)
 
@@ -116,7 +123,51 @@ class SequencerHandler(BaseHTTPRequestHandler):
         if urlparse(self.path).path.rstrip("/") == "/api/assistant/chat":
             self._assistant_chat()
             return
+        if self._dashboard_route("POST"):
+            return
         self._send_error(404, f"Unknown endpoint: {urlparse(self.path).path}")
+
+    # ---------- dashboard ----------
+
+    def _read_json(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length", 0))
+        if length > MAX_BODY:
+            raise DashboardError(413, "Request too large")
+        try:
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except ValueError as e:
+            raise DashboardError(400, f"Invalid JSON: {e}")
+        if not isinstance(body, dict):
+            raise DashboardError(400, "Expected a JSON object")
+        return body
+
+    def _dashboard_route(self, method: str) -> bool:
+        """GET /api/dashboard, GET /api/dashboard/state, PUT /api/dashboard/areas/<id>/brightness {"brightness": 0..100},
+        POST /api/dashboard/areas/<id>/scenes/<scene>, POST /api/dashboard/scenes/<scene>. False if not a dashboard path."""
+        path = unquote(urlparse(self.path).path.rstrip("/"))
+        if path != "/api/dashboard" and not path.startswith("/api/dashboard/"):
+            return False
+        dash = self.server.dashboard
+        parts = path.split("/")[3:]
+        try:
+            if method == "GET" and parts == []:
+                result = dash.describe()
+            elif method == "GET" and parts == ["state"]:
+                result = dash.state()
+            elif method == "PUT" and len(parts) == 3 and parts[0] == "areas" and parts[2] == "brightness":
+                result = dash.set_brightness(parts[1], self._read_json().get("brightness"))
+            elif method == "POST" and len(parts) == 4 and parts[0] == "areas" and parts[2] == "scenes":
+                result = dash.apply_area_scene(parts[1], parts[3])
+            elif method == "POST" and len(parts) == 2 and parts[0] == "scenes":
+                result = dash.activate_house_scene(parts[1])
+            else:
+                self._send_error(404, f"Unknown endpoint: {path}")
+                return True
+        except DashboardError as e:
+            self._send_error(e.status, str(e))
+            return True
+        self._send_json(200, result)
+        return True
 
     # ---------- pattern assistant ----------
 
@@ -178,7 +229,9 @@ class SequencerHandler(BaseHTTPRequestHandler):
 
     def _serve_static(self, path: str) -> None:
         static_dir = self.server.static_dir
-        if path in ("", "/", "/patterns"):
+        if path in ("", "/", "/dashboard"):
+            target = static_dir / "dashboard.html"  # phone-first area sliders and scenes
+        elif path in ("/interface", "/patterns"):
             target = static_dir / "patterns.html"  # the pattern editor, with runs and scenes
         elif path == "/config":
             target = static_dir / "config.html"  # controller setup
@@ -226,10 +279,12 @@ class SequencerServer(ThreadingHTTPServer):
         static_dir: Path,
         engine_url: str = "http://127.0.0.1:8765",
         assistant: AssistantConfig | None = None,
+        dashboard: Dashboard | None = None,
     ) -> None:
         self.static_dir = static_dir
         self.engine_url = engine_url
         self.assistant = assistant if assistant is not None else AssistantConfig()
+        self.dashboard = dashboard if dashboard is not None else Dashboard(engine_url=engine_url)
         super().__init__(server_address, SequencerHandler)
 
 
@@ -243,11 +298,13 @@ class SequencerAppServer:
         static_dir: Path | str | None = None,
         engine_url: str = "http://127.0.0.1:8765",
         assistant: AssistantConfig | None = None,
+        dashboard: Dashboard | None = None,
     ) -> None:
         self.host = host
         self.port = port
         self.engine_url = engine_url
         self.assistant = assistant if assistant is not None else AssistantConfig()
+        self.dashboard = dashboard if dashboard is not None else Dashboard(engine_url=engine_url)
         self.static_dir = Path(static_dir) if static_dir else Path(__file__).resolve().parent / "static"
 
         self.server: SequencerServer | None = None
@@ -260,7 +317,7 @@ class SequencerAppServer:
     def start(self) -> None:
         if self.is_running:
             return
-        self.server = SequencerServer((self.host, self.port), self.static_dir, self.engine_url, self.assistant)
+        self.server = SequencerServer((self.host, self.port), self.static_dir, self.engine_url, self.assistant, self.dashboard)
         self.port = self.server.server_port
         self._thread = threading.Thread(target=self.server.serve_forever, daemon=True, name="WledSequencerServer")
         self._thread.start()

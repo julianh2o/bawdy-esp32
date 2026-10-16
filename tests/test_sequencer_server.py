@@ -42,8 +42,12 @@ class TestWebServer(unittest.TestCase):
         except urllib.error.HTTPError as e:
             return e.code, e.read().decode()
 
-    def test_pattern_editor_at_root_and_setup_page(self) -> None:
-        for path in ("/", "/patterns"):
+    def test_dashboard_at_root_editor_at_interface_and_setup_page(self) -> None:
+        for path in ("/", "/dashboard"):
+            status, html = self.get(path)
+            self.assertEqual(status, 200)
+            self.assertIn("/js/dashboard.js", html)
+        for path in ("/interface", "/patterns"):
             status, html = self.get(path)
             self.assertEqual(status, 200)
             self.assertIn("/js/patterns.js", html)
