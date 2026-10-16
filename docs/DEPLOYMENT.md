@@ -182,3 +182,21 @@ lightd: `LIGHTD_HOST`, `LIGHTD_PORT`, `LIGHTD_FPS`, `LIGHTD_DRY_RUN`, `CONTROLLE
 ## Not covered
 
 The Java GUI is not containerized. CI runs the Python tests before deploying, but not on pull requests, and doesn't run the Java tests (see TODO.md #6).
+
+## Dashboard
+
+`/` is a phone-first control panel: a brightness slider per area (west, east, office, red room, pool), hold an area
+name for Bright / Dim / Party, and whole-house scene buttons. The pattern editor moved to `/interface`.
+
+Sliders drive Home Assistant bulbs (`light.turn_on` / `turn_off`) and the area's lightd strips together. The browser
+only talks to this server; set Home Assistant access on the web container:
+
+```
+HA_URL=http://homeassistant.local:8123
+HA_TOKEN=<long-lived access token>
+```
+
+(`HASS_SERVER` / `HASS_TOKEN` work too.) Without them the dashboard still loads and strips still respond, with a
+banner saying HA isn't configured. Which lights belong to which area, the per-area scene presets, and the whole-house
+scene entities live in `src/wled_sequencer/dashboard_areas.json`; point `DASHBOARD_CONFIG` at a copy to change them.
+Whole-house scenes call `scene.turn_on`; HA's sync automation mirrors them onto the strips.

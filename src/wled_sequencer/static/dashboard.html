@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2a1f3d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Lights</title>
+  <link rel="stylesheet" href="/css/dashboard.css">
+</head>
+<body>
+  <header class="top">
+    <h1><span class="petal" aria-hidden="true">✿</span> Lights</h1>
+    <nav>
+      <a href="/interface">Patterns</a>
+      <a href="/config">Setup</a>
+    </nav>
+  </header>
+
+  <main>
+    <div id="banner" class="banner" hidden></div>
+
+    <section class="house" aria-label="Whole house scenes">
+      <h2>Whole house</h2>
+      <div id="house-scenes" class="chips"></div>
+    </section>
+
+    <section aria-label="Areas">
+      <h2>Areas <span class="hint">hold a name for scenes</span></h2>
+      <div id="areas" class="areas"></div>
+    </section>
+  </main>
+
+  <div id="sheet-backdrop" class="sheet-backdrop" hidden></div>
+  <div id="sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" hidden>
+    <div class="sheet-grip" aria-hidden="true"></div>
+    <h3 id="sheet-title"></h3>
+    <div id="sheet-scenes" class="sheet-scenes"></div>
+    <button type="button" id="sheet-cancel" class="sheet-cancel">Cancel</button>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="/js/dashboard.js"></script>
+</body>
+</html>

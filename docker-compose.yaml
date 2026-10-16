@@ -59,6 +59,10 @@ services:
       ASSISTANT_MODEL: ${ASSISTANT_MODEL:-}
       ASSISTANT_API_KEY: ${ASSISTANT_API_KEY:-}
       ASSISTANT_REASONING_EFFORT: ${ASSISTANT_REASONING_EFFORT:-}
+      # Dashboard (/) Home Assistant access; the token stays server-side (see docs/DEPLOYMENT.md)
+      HA_URL: ${HA_URL:-}
+      HA_TOKEN: ${HA_TOKEN:-}
+      DASHBOARD_CONFIG: ${DASHBOARD_CONFIG:-}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:${WEB_PORT:-8080}/', timeout=2)"]
       interval: 10s

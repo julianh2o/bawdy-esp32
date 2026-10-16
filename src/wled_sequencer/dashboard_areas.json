@@ -1,0 +1,47 @@
+{
+  "_comment": "Areas on the dashboard (/). lights = Home Assistant light entities; strips = lightd targets. Override with DASHBOARD_CONFIG=/path/to/file.json.",
+  "areas": [
+    {
+      "id": "west",
+      "name": "West",
+      "lights": ["light.c2", "light.c3", "light.c5", "light.c6", "light.c7", "light.c8", "light.c10", "light.c11",
+                 "light.c12", "light.c17", "light.c24", "light.hue_white_1"],
+      "strips": ["wled_01/1", "govee_01/1", "wled_02/1"]
+    },
+    {
+      "id": "east",
+      "name": "East",
+      "lights": ["light.c9"],
+      "strips": ["wled_01/2", "govee_02/1"]
+    },
+    {
+      "id": "office",
+      "name": "Office",
+      "lights": ["light.c1", "light.n1", "light.n2"],
+      "strips": []
+    },
+    {
+      "id": "red_room",
+      "name": "Red Room",
+      "lights": ["light.c4"],
+      "strips": []
+    },
+    {
+      "id": "pool",
+      "name": "Pool",
+      "lights": ["light.c13", "light.c14", "light.c15", "light.c16", "light.c18", "light.c19"],
+      "strips": ["govee_03/1"]
+    }
+  ],
+  "area_scenes": {
+    "bright": {"label": "Bright", "brightness": 100, "kelvin": 2700},
+    "dim": {"label": "Dim", "brightness": 25, "kelvin": 2700},
+    "party": {"label": "Party", "brightness": 100, "party": true}
+  },
+  "house_scenes": [
+    {"id": "bright", "label": "Bright", "entity": "scene.bright"},
+    {"id": "dim", "label": "Dim", "entity": "scene.dim"},
+    {"id": "party", "label": "Party", "entity": "scene.party"},
+    {"id": "off", "label": "Off", "entity": "scene.off"}
+  ]
+}
