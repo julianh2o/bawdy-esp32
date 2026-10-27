@@ -10,14 +10,38 @@ from __future__ import annotations
 import json
 import os
 import random
+import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 DEFAULT_CONFIG = Path(__file__).resolve().parent / "dashboard_areas.json"
 WARM_KELVIN = 2700
+NON_DIMMABLE_MODES = {"onoff", "unknown"}
+CONFIRM_TIMEOUT = 4.0  # seconds to wait for HA + lightd to confirm a house scene
+CONFIRM_POLL = 0.25
+CLOCK_SLACK = 2.0  # seconds of clock skew allowed between this server and HA
+
+
+def _is_dimmable(state_obj: dict[str, Any]) -> bool:
+    """True when an HA light entity supports dimming (or reports a numeric brightness)."""
+    attrs = state_obj.get("attributes") or {}
+    modes = attrs.get("supported_color_modes")
+    if isinstance(modes, list) and modes:
+        return any(m not in NON_DIMMABLE_MODES for m in modes)
+    return attrs.get("brightness") is not None
+
+
+def _parse_iso_timestamp(value: Any) -> float | None:
+    if not isinstance(value, str) or value in ("unknown", "unavailable", ""):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
 
 
 class DashboardError(Exception):
@@ -55,13 +79,16 @@ def _describe_http_error(what: str, e: Exception) -> str:
 
 class Dashboard:
     def __init__(self, config: dict[str, Any] | None = None, ha_url: str = "", ha_token: str = "",
-                 engine_url: str = "http://127.0.0.1:8765", timeout: float = 8.0) -> None:
+                 engine_url: str = "http://127.0.0.1:8765", timeout: float = 8.0,
+                 confirm_timeout: float = CONFIRM_TIMEOUT) -> None:
         self.config = config if config is not None else load_config()
+        self.confirm_timeout = confirm_timeout
         self.ha_url = ha_url.rstrip("/")
         self.ha_token = ha_token
         self.engine_url = engine_url.rstrip("/")
         self.timeout = timeout
         self.areas = {a["id"]: a for a in self.config.get("areas", [])}
+        self._area_active_scenes: dict[str, str | None] = {}
 
     @classmethod
     def from_env(cls, engine_url: str) -> Dashboard:
@@ -112,7 +139,7 @@ class Dashboard:
         }
 
     def state(self) -> dict[str, Any]:
-        """Each area's brightness 0..100: the mean of its lit HA lights and active strips (0 when all off)."""
+        """Each area's brightness 0..100: the mean of its lit dimmable HA lights and active strips (0 when all off)."""
         states: dict[str, dict[str, Any]] = {}
         errors: list[str] = []
         try:
@@ -137,36 +164,78 @@ class Dashboard:
         except Exception as e:
             errors.append(_describe_http_error("lightd", e))
 
+        active_lightd_scenes: set[str] | None = None
+        try:
+            scenes_resp = self._engine("GET", "/scenes")
+            if isinstance(scenes_resp, dict) and isinstance(scenes_resp.get("scenes"), list):
+                active_lightd_scenes = {s["name"] for s in scenes_resp["scenes"] if s.get("active")}
+        except Exception:
+            active_lightd_scenes = None
+
+        scene_timestamps: dict[str, float] = {}
+        for hs in self.config.get("house_scenes", []):
+            sid = hs["id"]
+            st = states.get(hs.get("entity", f"scene.{sid}"))
+            if st is not None:
+                ts = _parse_iso_timestamp(st.get("state"))
+                if ts is not None:
+                    scene_timestamps[sid] = ts
+
+        # The house scene with the newest HA activation that lightd also reports active (HA only if lightd is down).
+        active_scene: str | None = None
+        candidates = [(ts, sid) for sid, ts in scene_timestamps.items()
+                      if active_lightd_scenes is None or sid in active_lightd_scenes]
+        if candidates:
+            active_scene = max(candidates)[1]
+
         out: dict[str, Any] = {}
         for area in self.areas.values():
+            aid = area["id"]
             lights = [states[e] for e in area.get("lights", []) if e in states]
             available = [s for s in lights if s.get("state") not in ("unavailable", "unknown")]
             lit = [s for s in available if s.get("state") == "on"]
-            light_pcts = [((s.get("attributes") or {}).get("brightness") or 255) / 255 * 100 for s in lit]
+            dimmable_avail = [s for s in available if _is_dimmable(s)]
+            light_pcts = [
+                float(b) / 255 * 100 for s in lit if _is_dimmable(s)
+                for b in [(s.get("attributes") or {}).get("brightness")]
+                if isinstance(b, (int, float))
+            ]
 
             known_strips = [t for t in area.get("strips", []) if t in strip_level]
-            if playing_strips is None:
-                lit_strips = [strip_level[t] * 100 for t in known_strips if strip_level[t] > 0]
-            else:
-                lit_strips = [strip_level[t] * 100 for t in known_strips if t in playing_strips and strip_level[t] > 0]
+            playing = [t for t in known_strips if playing_strips is None or t in playing_strips]
+            lit_strips = [strip_level[t] * 100 for t in playing if strip_level[t] > 0]
+            dimmable = bool(dimmable_avail or known_strips or not available)
 
-            if area["id"] == "pool":
-                samples = light_pcts + ([strip_level[t] * 100 for t in known_strips if (playing_strips is None or t in playing_strips)] if not light_pcts else lit_strips)
+            if aid == "pool":
+                samples = light_pcts + ([strip_level[t] * 100 for t in playing] if not light_pcts else lit_strips)
                 has_sources = bool(available or known_strips)
-            elif available:
+            elif dimmable_avail:
                 samples = light_pcts
                 has_sources = True
+            elif available and not known_strips:
+                # on/off-only lights: the slider is a toggle, so report 100/0 rather than a fake level
+                samples = [100.0] if lit else []
+                has_sources = True
             else:
-                samples = [strip_level[t] * 100 for t in known_strips if (playing_strips is None or t in playing_strips)]
-                has_sources = bool(known_strips)
+                samples = [strip_level[t] * 100 for t in playing]
+                has_sources = bool(available or known_strips)
 
-            if has_sources:
-                brightness = round(sum(samples) / len(samples)) if samples else 0
-            else:
-                brightness = None
-            out[area["id"]] = {"brightness": brightness, "on": bool(lit or lit_strips), "available": len(available),
-                               "lights": len(area.get("lights", []))}
-        return {"areas": out, "warnings": errors}
+            brightness = (round(sum(samples) / len(samples)) if samples else 0) if has_sources else None
+            out[aid] = {
+                "brightness": brightness,
+                "on": bool(lit or lit_strips),
+                "dimmable": dimmable,
+                "available": len(available),
+                "lights": len(area.get("lights", [])),
+                "active_scene": self._area_active_scenes.get(aid),
+            }
+        return {
+            "areas": out,
+            "active_scene": active_scene,
+            "scene_timestamps": scene_timestamps,
+            "lightd_active_scenes": sorted(active_lightd_scenes) if active_lightd_scenes is not None else [],
+            "warnings": errors,
+        }
 
     def _start_idle_strips(self, targets: list[str]) -> None:
         """Strips with nothing playing (or playing solid black from pool_off/off) stay dark, so give them warm white."""
@@ -206,6 +275,7 @@ class Dashboard:
                 self._engine("PUT", "/brightness", {"targets": area["strips"], "brightness": pct / 100})
             except Exception as e:
                 errors.append(_describe_http_error("lightd", e))
+        self._area_active_scenes.pop(area_id, None)  # a hand-set level is no longer the area scene
         return self._finish(errors, attempted)
 
     def apply_area_scene(self, area_id: str, scene_id: str) -> dict[str, Any]:
@@ -252,7 +322,10 @@ class Dashboard:
                 self._engine("PUT", "/brightness", {"targets": strips, "brightness": pct / 100})
             except Exception as e:
                 errors.append(_describe_http_error("lightd", e))
-        return self._finish(errors, attempted)
+        res = self._finish(errors, attempted)
+        self._area_active_scenes[area_id] = scene_id
+        res["active_scene"] = scene_id
+        return res
 
     def activate_house_scene(self, scene_id: str) -> dict[str, Any]:
         """Whole-house HA scene; HA's lights_sync_scene automation mirrors it onto the strips."""
@@ -260,9 +333,41 @@ class Dashboard:
         if scene is None:
             raise DashboardError(404, f"Unknown scene: {scene_id}")
         try:
+            requested = time.time()
             self._ha_service("scene", "turn_on", {"entity_id": scene["entity"]})
         except DashboardError:
             raise
         except Exception as e:
             raise DashboardError(502, _describe_http_error("Home Assistant", e))
-        return {"status": "ok", "warnings": []}
+        self._area_active_scenes.clear()
+        confirmed, lightd_active = self._confirm_house_scene(scene, requested)
+        return {"status": "ok", "warnings": [], "confirmed": confirmed, "lightd_active": lightd_active,
+                "active_scene": scene_id if confirmed else None}
+
+    def _confirm_house_scene(self, scene: dict[str, Any], requested: float) -> tuple[bool, bool | None]:
+        """Wait (up to confirm_timeout) for HA's scene timestamp to move past the click, and look at lightd.
+
+        Confirmed = HA reports the scene activated at/after the click (CLOCK_SLACK allows small clock skew) and,
+        when lightd knows a scene of that name, lightd reports it active. lightd_active is None if it has no such scene.
+        """
+        deadline = time.monotonic() + self.confirm_timeout
+        ha_ok, lightd_active = False, None
+        while True:
+            if not ha_ok:
+                try:
+                    st = self._ha("GET", f"/api/states/{scene['entity']}") or {}
+                    ts = _parse_iso_timestamp(st.get("state"))
+                    ha_ok = ts is not None and ts >= requested - CLOCK_SLACK
+                except Exception:
+                    pass
+            try:
+                lightd_active = bool((self._engine("GET", f"/scenes/{scene['id']}") or {}).get("active"))
+            except urllib.error.HTTPError as e:
+                lightd_active = None if e.code == 404 else False
+            except Exception:
+                lightd_active = False
+            if ha_ok and lightd_active is not False:
+                return True, lightd_active
+            if time.monotonic() >= deadline:
+                return False, lightd_active
+            time.sleep(CONFIRM_POLL)

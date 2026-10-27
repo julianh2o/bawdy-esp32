@@ -10,9 +10,12 @@
   const SEND_EVERY_MS = 150;   // live updates while dragging, at most this often per area
   const POLL_MS = 5000;
   const QUIET_AFTER_TOUCH_MS = 4000;  // don't let polling yank a slider the user just moved
+  const SETTLE_MS = 1500;  // after letting go, read the real state once HA has settled
 
   const $ = (id) => document.getElementById(id);
-  const areas = new Map();  // id -> { el, slider, value, name, lastTouched, dragging, sender }
+  const areas = new Map();  // id -> { el, slider, value, name, toggle, lastTouched, dragging, sender, settleTimer }
+  const chips = new Map();  // house scene id -> chip button
+  let activeHouseScene = null;
   let areaScenes = [];
   let toastTimer = 0;
 
@@ -53,8 +56,10 @@
 
   function showValue(area, pct) {
     area.slider.style.setProperty("--pct", `${pct}%`);
-    area.value.textContent = pct > 0 ? `${pct}%` : "Off";
+    area.value.textContent = area.toggleOnly ? (pct > 0 ? "On" : "Off") : (pct > 0 ? `${pct}%` : "Off");
     area.value.classList.toggle("on", pct > 0);
+    area.toggle.textContent = pct > 0 ? "Turn off" : "Turn on";
+    area.toggle.setAttribute("aria-pressed", String(pct > 0));
   }
 
   /** Sends the latest value at most every SEND_EVERY_MS, never two requests in flight, and always the final value. */
@@ -78,10 +83,23 @@
         if (pending !== null && !timer) flush();
       }
     }
-    return (value) => {
+    const send = (value) => {
       pending = value;
       if (!timer) flush();
     };
+    send.busy = () => inFlight || pending !== null;
+    return send;
+  }
+
+  /** Once the user lets go (and the last value is sent), wait for HA to settle, then show the real level. */
+  function scheduleSettle(area) {
+    clearTimeout(area.settleTimer);
+    area.settleTimer = setTimeout(() => {
+      if (area.dragging) return;
+      if (area.sender.busy()) { scheduleSettle(area); return; }
+      area.lastTouched = 0;
+      refresh();
+    }, SETTLE_MS);
   }
 
   // ---------- areas ----------
@@ -91,30 +109,44 @@
     el.className = "area";
     el.innerHTML = `
       <div class="area-head">
-        <button type="button" class="area-name"></button>
+        <button type="button" class="area-name"><span class="label"></span><span class="scene-dot" hidden></span></button>
         <span class="area-value">–</span>
       </div>
-      <input type="range" min="0" max="100" step="1" value="0">`;
+      <input type="range" min="0" max="100" step="1" value="0">
+      <button type="button" class="area-toggle" hidden>Turn on</button>`;
     const name = el.querySelector(".area-name");
     const slider = el.querySelector("input");
     const value = el.querySelector(".area-value");
-    name.textContent = info.name;
+    const toggle = el.querySelector(".area-toggle");
+    name.querySelector(".label").textContent = info.name;
     slider.setAttribute("aria-label", `${info.name} brightness`);
 
-    const area = { el, slider, value, name, lastTouched: 0, dragging: false, sender: makeSender(info.id) };
+    const area = { el, slider, value, name, toggle, toggleOnly: false, lastTouched: 0, dragging: false,
+                   sender: makeSender(info.id), settleTimer: 0 };
     areas.set(info.id, area);
 
     slider.addEventListener("input", () => {
       const pct = Number(slider.value);
       area.lastTouched = Date.now();
+      clearTimeout(area.settleTimer);
       showValue(area, pct);
       area.sender(pct);
     });
-    slider.addEventListener("pointerdown", () => { area.dragging = true; });
-    const release = () => { area.dragging = false; area.lastTouched = Date.now(); };
+    slider.addEventListener("pointerdown", () => { area.dragging = true; clearTimeout(area.settleTimer); });
+    const release = () => { area.dragging = false; area.lastTouched = Date.now(); scheduleSettle(area); };
     slider.addEventListener("pointerup", release);
     slider.addEventListener("pointercancel", release);
     slider.addEventListener("change", release);
+
+    // Areas with only on/off lights get a toggle instead of a slider.
+    toggle.addEventListener("click", () => {
+      const pct = Number(slider.value) > 0 ? 0 : 100;
+      slider.value = pct;
+      area.lastTouched = Date.now();
+      showValue(area, pct);
+      area.sender(pct);
+      scheduleSettle(area);
+    });
 
     attachLongPress(name, () => openSheet(info));
     return el;
@@ -159,10 +191,12 @@
       b.textContent = scene.label;
       b.addEventListener("click", async () => {
         closeSheet();
+        const area = areas.get(info.id);
         try {
-          await call("POST", `/areas/${encodeURIComponent(info.id)}/scenes/${encodeURIComponent(scene.id)}`);
+          const res = await call("POST", `/areas/${encodeURIComponent(info.id)}/scenes/${encodeURIComponent(scene.id)}`);
           toast(`${info.name}: ${scene.label}`);
-          areas.get(info.id).lastTouched = 0;
+          showAreaScene(area, res && res.active_scene ? res.active_scene : scene.id);
+          area.lastTouched = 0;
           setTimeout(refresh, 600);
         } catch (e) {
           toast(e.message, true);
@@ -185,23 +219,52 @@
 
   // ---------- whole-house scenes ----------
 
+  /** The chip of the house scene that's on now gets `active`; the others lose it. */
+  function setActiveChip(id) {
+    activeHouseScene = id || null;
+    for (const [sid, chip] of chips) {
+      chip.classList.toggle("active", sid === activeHouseScene);
+      chip.setAttribute("aria-pressed", String(sid === activeHouseScene));
+    }
+  }
+
+  /** A small dot after an area's name while one of its scenes (long-press sheet) is what it shows. */
+  function showAreaScene(area, sceneId) {
+    if (!area) return;
+    const dot = area.name.querySelector(".scene-dot");
+    const label = sceneId ? (areaScenes.find((s) => s.id === sceneId) || {}).label || sceneId : "";
+    dot.hidden = !sceneId;
+    dot.dataset.scene = sceneId || "";
+    dot.title = label ? `Scene: ${label}` : "";
+  }
+
   function buildHouseScenes(scenes) {
     const box = $("house-scenes");
     box.innerHTML = "";
+    chips.clear();
     for (const scene of scenes) {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "chip";
       b.dataset.scene = scene.id;
       b.textContent = scene.label;
+      b.setAttribute("aria-pressed", "false");
+      chips.set(scene.id, b);
       b.addEventListener("click", async () => {
+        if (b.classList.contains("busy")) return;
+        const before = activeHouseScene;
+        for (const c of chips.values()) c.classList.remove("active");
         b.classList.add("busy");
         try {
-          await call("POST", `/scenes/${encodeURIComponent(scene.id)}`);
+          // The server answers once HA's scene timestamp is newer than the click and lightd reports it active.
+          const res = await call("POST", `/scenes/${encodeURIComponent(scene.id)}`);
+          if (!res || !res.confirmed) throw new Error(`${scene.label} didn't confirm (Home Assistant or lightd didn't report it on)`);
+          setActiveChip(scene.id);
           toast(`Whole house: ${scene.label}`);
-          for (const a of areas.values()) a.lastTouched = 0;
-          setTimeout(refresh, 1200);
+          for (const a of areas.values()) { a.lastTouched = 0; showAreaScene(a, null); }
+          setTimeout(refresh, 600);
         } catch (e) {
+          setActiveChip(before);
           toast(e.message, true);
         } finally {
           b.classList.remove("busy");
@@ -225,18 +288,29 @@
       return;
     }
     banner(data.warnings && data.warnings.length ? data.warnings.join(" · ") : "");
+    const anyBusy = [...chips.values()].some((c) => c.classList.contains("busy"));
+    if (!anyBusy && "active_scene" in data) setActiveChip(data.active_scene);
     const now = Date.now();
     for (const [id, st] of Object.entries(data.areas || {})) {
       const area = areas.get(id);
       if (!area) continue;
       area.el.classList.toggle("unavailable", st.lights > 0 && st.available === 0 && st.brightness === null);
+      showAreaScene(area, st.active_scene || null);
+      const toggleOnly = st.dimmable === false;
+      if (toggleOnly !== area.toggleOnly) {
+        area.toggleOnly = toggleOnly;
+        area.el.classList.toggle("toggle-only", toggleOnly);
+        area.slider.hidden = toggleOnly;
+        area.toggle.hidden = !toggleOnly;
+      }
       if (area.dragging || now - area.lastTouched < QUIET_AFTER_TOUCH_MS) continue;
       if (st.brightness === null || st.brightness === undefined) {
         area.value.textContent = "–";
         continue;
       }
-      area.slider.value = st.brightness;
-      showValue(area, st.brightness);
+      const pct = toggleOnly ? (st.on ? 100 : 0) : st.brightness;
+      area.slider.value = pct;
+      showValue(area, pct);
     }
   }
 
