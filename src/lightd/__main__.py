@@ -28,6 +28,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state", default=env("LIGHTD_STATE", "config/lightd-state.json"),
                         help="active runs and channel brightness are saved here and restored on start")
     parser.add_argument("--scenes", default=env("SCENES_FILE", "config/scenes.json"))
+    parser.add_argument("--segments", default=env("SEGMENTS_DIR", "config/segments"),
+                        help="known-good WLED segment snapshots, one <controller>.json per board")
+    parser.add_argument("--segment-preset", type=int, default=int(env("SEGMENT_PRESET_ID", "250")),
+                        help="WLED preset slot that 'restore segments' may save and set as the boot preset")
     parser.add_argument("--host", default=env("LIGHTD_HOST", "0.0.0.0"))
     parser.add_argument("--port", type=int, default=int(env("LIGHTD_PORT", "8765")))
     parser.add_argument("--fps", type=float, default=float(env("LIGHTD_FPS", "30")))
@@ -45,7 +49,8 @@ def main(argv: list[str] | None = None) -> int:
 
         transport = FakeTransport()
     app = build(args.controllers, args.patterns, args.user_patterns, args.state, args.scenes, fps=args.fps,
-                discovery=not args.no_discovery, transport=transport, dry_run=args.dry_run)
+                discovery=not args.no_discovery, transport=transport, dry_run=args.dry_run,
+                segments=args.segments, segment_preset=args.segment_preset)
     try:
         controllers = app.registry.load()
     except ConfigError as e:

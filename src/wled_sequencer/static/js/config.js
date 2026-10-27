@@ -242,6 +242,7 @@ function renderControllerCard(c) {
 
   let status;
   if (moved) status = el("span", { class: "pill warn", title: `This board now answers at ${moved}` }, `moved to ${moved}`);
+  else if (S.live.find((l) => l.id === c.id.trim())?.segments?.reset) status = el("span", { class: "pill warn", title: "WLED lost its segments; restore them below" }, "segments reset");
   else if (board.online) status = el("span", { class: "pill ok" }, "online");
   else if (board.known) status = el("span", { class: "pill warn", title: board.error || "" }, "offline");
   else status = el("span", { class: "pill", title: board.error || "" }, "not seen");
@@ -267,6 +268,20 @@ function renderControllerCard(c) {
   );
 
   const notes = [];
+  const live = S.live.find((l) => l.id === c.id.trim());
+  const seg = live?.segments || {};
+  if (seg.reset) {
+    const boot = el("input", { type: "checkbox", checked: true });
+    notes.push(el("div", { class: "ctrl-note seg-reset" },
+      tag("⚠ segments reset", "warn"), "Segments were reset (power cycle?).",
+      el("button", {
+        class: "btn btn-small btn-primary",
+        title: "Send the saved Govee RGB / Govee White segments back to the board",
+        onclick: (e) => { e.stopPropagation(); restoreSegments(c.id.trim(), boot.checked, e.target); },
+      }, "Restore segments"),
+      el("label", { class: "check small", title: "Also save the restored layout as a WLED preset and make it the boot preset, so the board comes up right by itself" },
+        boot, "and make it the boot preset")));
+  }
   if (moved) {
     notes.push(el("div", { class: "ctrl-note" },
       tag("IP changed", "warn"), `Board found at ${moved}.`,
@@ -289,6 +304,17 @@ function renderControllerCard(c) {
     !outputs.length
       ? el("div", { class: "row", style: "margin-top:8px" },
           el("button", { class: "btn btn-small btn-ghost", onclick: () => { c.channels.push({ name: "" }); renderAll(); } }, "+ Add channel"))
+      : null,
+    live?.online && outputs.length
+      ? el("div", { class: "row small muted", style: "margin-top:8px" },
+          seg.saved ? (seg.match ? "Segments match the saved known-good layout." : "Segments differ from the saved layout.")
+            : "No known-good segment layout saved.",
+          el("span", { class: "spacer" }),
+          el("button", {
+            class: "btn btn-small btn-ghost",
+            title: "Remember the board's current WLED segments, so they can be restored after a power cycle",
+            onclick: (e) => saveSegments(c.id.trim(), e.target),
+          }, "Save as known-good"))
       : null,
   );
 
@@ -377,6 +403,34 @@ function renderChannel(c, ch, output, ip) {
       zoneSelect,
       reversed,
       extra));
+}
+
+// ---------- known-good segments (Govee boards after a power cycle) ----------
+
+async function restoreSegments(id, bootPreset, btn) {
+  btn.disabled = true;
+  btn.textContent = "Restoring…";
+  try {
+    const res = await api("POST", `/controllers/${encodeURIComponent(id)}/segments/restore`, { boot_preset: bootPreset });
+    banner(`${id}: segments restored, linked channel is back${res.boot_preset ? ` (saved as boot preset ${res.boot_preset})` : ""}.`, "ok");
+  } catch (e) {
+    banner(`${id}: restore failed: ${e.message}`, "err");
+  }
+  await pollLive();
+  renderControllers();
+}
+
+async function saveSegments(id, btn) {
+  if (!confirm(`Save ${id}'s current WLED segments as its known-good layout? Restores will put these back.`)) return;
+  btn.disabled = true;
+  try {
+    await api("POST", `/controllers/${encodeURIComponent(id)}/segments/save`);
+    banner(`${id}: segments saved as known-good.`, "ok");
+  } catch (e) {
+    banner(`${id}: not saved: ${e.message}`, "err");
+  }
+  await pollLive();
+  renderControllers();
 }
 
 // ---------- rendering: discovery ----------

@@ -252,6 +252,8 @@ input[type="number"] { width: 90px; }
 .ctrl-body { border-top: 1px solid var(--border); padding: 8px 12px 12px; display: none; }
 .ctrl.open .ctrl-body { display: block; }
 .ctrl-note { font-size: 12px; margin: 4px 0 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ctrl-note.seg-reset { padding: 8px 10px; border-radius: 6px; background: var(--warn-soft); color: var(--warn); font-size: 13px; }
+.ctrl-note.seg-reset .check { color: var(--text); }
 
 .channel {
   border: 1px solid var(--border);

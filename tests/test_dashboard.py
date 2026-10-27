@@ -240,6 +240,15 @@ class TestDashboard(unittest.TestCase):
     def test_unknown_dashboard_path(self) -> None:
         self.assertEqual(self.req("GET", "/api/dashboard/nope")[0], 404)
 
+    def test_state_lists_boards_that_need_setup(self) -> None:
+        self.assertEqual(self.req("GET", "/api/dashboard/state")[1]["setup"], [])
+        self.engine_routes[("GET", "/api/controllers")] = (200, {"controllers": [
+            {"id": "govee_01", "warnings": ["segments reset"],
+             "channels": [{"target": "govee_01/1", "name": "West Ceiling", "brightness": 1.0}]},
+        ]})
+        self.assertEqual(self.req("GET", "/api/dashboard/state")[1]["setup"],
+                         [{"controller": "govee_01", "name": "West Ceiling", "message": "segments reset"}])
+
 
     # ---------- #3 active scene chip, #4 readout of on/off-only and mid-transition lights ----------
 

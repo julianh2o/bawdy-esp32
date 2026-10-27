@@ -31,6 +31,7 @@ class ControllerEntry:
         self.error: str | None = None
         self.last_attempt = 0.0
         self.refreshing = False
+        self.segment_status: dict[str, Any] = {"saved": False, "match": None, "reset": False}
 
     @property
     def configured_ip(self) -> str:
@@ -81,6 +82,8 @@ class ControllerEntry:
             "identifying": c.identifying,
             "board": c.info.to_dict() if c.info else None,
             "channels": channels,
+            "segments": dict(self.segment_status),
+            "warnings": ["segments reset"] if self.segment_status.get("reset") else [],
         }
 
 
@@ -93,10 +96,12 @@ class Registry:
         transport: Any = None,
         browser: WledBrowser | None = None,
         controller_factory: Callable[..., WledController] | None = None,
+        segments: Any = None,
     ) -> None:
         self.store = store
         self.transport = transport
         self.browser = browser
+        self.segments = segments  # lightd.segments.SegmentStore: known-good segment snapshots (optional)
         self._factory = controller_factory or WledController
         self._entries: dict[str, ControllerEntry] = {}
         self._lock = threading.Lock()
@@ -173,6 +178,11 @@ class Registry:
         finally:
             entry.refreshing = False
         c = entry.controller
+        if entry.online and self.segments is not None:
+            try:
+                self.segments.check(entry)
+            except Exception as e:  # never let the snapshot logic break refreshing
+                log.warning("%s: segment check failed: %s", entry.id, e)
         if entry.online and not was_online:
             log.info("%s: online at %s, %d LEDs, %d channel(s)", entry.id, c.host,
                      c.info.led_count if c.info else 0, len(c.channels or []))

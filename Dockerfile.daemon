@@ -57,6 +57,7 @@ ENV APP_VERSION="${VERSION}" \
     USER_PATTERNS_DIR=/config/patterns \
     LIGHTD_STATE=/config/lightd-state.json \
     SCENES_FILE=/config/scenes.json \
+    SEGMENTS_DIR=/config/segments \
     BUILTIN_PATTERNS_DIR=/app/patterns
 
 USER wled
