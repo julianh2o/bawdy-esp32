@@ -74,7 +74,8 @@ class TestDashboard(unittest.TestCase):
         for srv in (self.ha, self.engine):
             Thread(target=srv.serve_forever, daemon=True).start()
         engine_url = f"http://127.0.0.1:{self.engine.server_port}"
-        dashboard = Dashboard(CONFIG, f"http://127.0.0.1:{self.ha.server_port}", TOKEN, engine_url, timeout=3)
+        dashboard = Dashboard(CONFIG, f"http://127.0.0.1:{self.ha.server_port}", TOKEN, engine_url, timeout=3,
+                              confirm_timeout=0.3)
         self.app = SequencerAppServer(host="127.0.0.1", port=0, engine_url=engine_url, dashboard=dashboard)
         self.app.start()
 
@@ -114,7 +115,8 @@ class TestDashboard(unittest.TestCase):
         status, body = self.req("GET", "/api/dashboard/state")
         self.assertEqual(status, 200)
         areas = body["areas"]
-        self.assertEqual(areas["west"], {"brightness": 100, "on": True, "available": 2, "lights": 2})  # off bulb isn't counted
+        self.assertEqual({k: areas["west"][k] for k in ("brightness", "on", "available", "lights", "dimmable")},
+                         {"brightness": 100, "on": True, "available": 2, "lights": 2, "dimmable": True})  # off bulb isn't counted
         self.assertIsNone(areas["office"]["brightness"])  # only light unavailable, no strips
         self.assertEqual(areas["pool"]["brightness"], 40)  # no bulbs: strips
         self.assertEqual(self.ha_calls[0][2], f"Bearer {TOKEN}")
@@ -203,8 +205,9 @@ class TestDashboard(unittest.TestCase):
                       self.engine_calls)
 
     def test_house_scene(self) -> None:
-        status, _ = self.req("POST", "/api/dashboard/scenes/dim")
+        status, body = self.req("POST", "/api/dashboard/scenes/dim")
         self.assertEqual(status, 200)
+        self.assertFalse(body["confirmed"])  # fake HA never reports a new timestamp
         self.assertEqual(self.services(), [("/api/services/scene/turn_on", {"entity_id": "scene.dim"})])
         self.assertEqual(self.req("POST", "/api/dashboard/scenes/nope")[0], 404)
         self.assertEqual(self.req("POST", "/api/dashboard/areas/west/scenes/nope")[0], 404)
@@ -236,6 +239,83 @@ class TestDashboard(unittest.TestCase):
 
     def test_unknown_dashboard_path(self) -> None:
         self.assertEqual(self.req("GET", "/api/dashboard/nope")[0], 404)
+
+
+    # ---------- #3 active scene chip, #4 readout of on/off-only and mid-transition lights ----------
+
+    @staticmethod
+    def _ts(offset: float = 0.0) -> str:
+        from datetime import datetime, timedelta, timezone
+        return (datetime.now(timezone.utc) + timedelta(seconds=offset)).isoformat()
+
+    def test_house_scene_confirms_when_ha_and_lightd_agree(self) -> None:
+        self.ha_routes[("GET", "/api/states/scene.dim")] = (200, {"entity_id": "scene.dim", "state": self._ts(0.5)})
+        self.engine_routes[("GET", "/api/scenes/dim")] = (200, {"name": "dim", "active": True})
+        status, body = self.req("POST", "/api/dashboard/scenes/dim")
+        self.assertEqual(status, 200)
+        self.assertEqual((body["confirmed"], body["active_scene"], body["lightd_active"]), (True, "dim", True))
+
+    def test_house_scene_not_confirmed_when_lightd_not_active(self) -> None:
+        self.ha_routes[("GET", "/api/states/scene.dim")] = (200, {"entity_id": "scene.dim", "state": self._ts(0.5)})
+        self.engine_routes[("GET", "/api/scenes/dim")] = (200, {"name": "dim", "active": False})
+        body = self.req("POST", "/api/dashboard/scenes/dim")[1]
+        self.assertFalse(body["confirmed"])
+        self.assertIsNone(body["active_scene"])
+
+    def test_house_scene_with_stale_ha_timestamp_is_not_confirmed(self) -> None:
+        self.ha_routes[("GET", "/api/states/scene.dim")] = (200, {"entity_id": "scene.dim", "state": self._ts(-3600)})
+        self.engine_routes[("GET", "/api/scenes/dim")] = (200, {"name": "dim", "active": True})
+        self.assertFalse(self.req("POST", "/api/dashboard/scenes/dim")[1]["confirmed"])
+
+    def _with_house_scenes(self, states, lightd_active):
+        cfg = {**CONFIG, "house_scenes": [{"id": "bright", "label": "Bright", "entity": "scene.bright"},
+                                          {"id": "dim", "label": "Dim", "entity": "scene.dim"}]}
+        self.ha_routes[("GET", "/api/states")] = (200, states)
+        self.engine_routes[("GET", "/api/scenes")] = (200, {"scenes": [{"name": n, "active": True} for n in lightd_active]})
+        self.app.server.dashboard = Dashboard(cfg, f"http://127.0.0.1:{self.ha.server_port}", TOKEN,
+                                              f"http://127.0.0.1:{self.engine.server_port}", timeout=3)
+        return self.req("GET", "/api/dashboard/state")[1]
+
+    def test_state_active_scene_is_newest_ha_scene_lightd_reports_active(self) -> None:
+        states = [{"entity_id": "scene.bright", "state": self._ts(-60)}, {"entity_id": "scene.dim", "state": self._ts(-10)}]
+        self.assertEqual(self._with_house_scenes(states, ["bright", "dim"])["active_scene"], "dim")
+        # dim is newer in HA but something replaced it on the strips: lightd only has bright active
+        self.assertEqual(self._with_house_scenes(states, ["bright"])["active_scene"], "bright")
+        self.assertIsNone(self._with_house_scenes(states, [])["active_scene"])
+
+    def test_area_scene_marks_area_until_slider_moves(self) -> None:
+        self.assertEqual(self.req("POST", "/api/dashboard/areas/west/scenes/dim")[1]["active_scene"], "dim")
+        self.assertEqual(self.req("GET", "/api/dashboard/state")[1]["areas"]["west"]["active_scene"], "dim")
+        self.req("PUT", "/api/dashboard/areas/west/brightness", {"brightness": 60})
+        self.assertIsNone(self.req("GET", "/api/dashboard/state")[1]["areas"]["west"]["active_scene"])
+
+    def _office(self, lights):
+        cfg = {**CONFIG, "areas": [{"id": "office", "name": "Office", "lights": [e["entity_id"] for e in lights], "strips": []}]}
+        self.ha_routes[("GET", "/api/states")] = (200, lights)
+        self.app.server.dashboard = Dashboard(cfg, f"http://127.0.0.1:{self.ha.server_port}", TOKEN,
+                                              f"http://127.0.0.1:{self.engine.server_port}", timeout=3)
+        return self.req("GET", "/api/dashboard/state")[1]["areas"]["office"]
+
+    def test_office_set_to_40_reads_40(self) -> None:
+        ct = {"supported_color_modes": ["color_temp"], "color_mode": "color_temp", "brightness": 102}
+        st = self._office([{"entity_id": "light.c1", "state": "on", "attributes": ct},
+                           {"entity_id": "light.n1", "state": "on", "attributes": ct}])
+        self.assertEqual((st["brightness"], st["dimmable"]), (40, True))
+
+    def test_lit_light_without_brightness_is_not_read_as_100(self) -> None:
+        st = self._office([
+            {"entity_id": "light.c1", "state": "on", "attributes": {"supported_color_modes": ["xy"], "brightness": 102}},
+            {"entity_id": "light.n1", "state": "on", "attributes": {"supported_color_modes": ["color_temp"]}},  # mid-transition
+            {"entity_id": "light.sw", "state": "on", "attributes": {"supported_color_modes": ["onoff"]}},  # relay
+        ])
+        self.assertEqual(st["brightness"], 40)
+
+    def test_area_of_only_onoff_lights_is_a_toggle(self) -> None:
+        onoff = {"supported_color_modes": ["onoff"], "color_mode": "onoff"}
+        st = self._office([{"entity_id": "light.sw", "state": "on", "attributes": onoff}])
+        self.assertEqual((st["dimmable"], st["on"], st["brightness"]), (False, True, 100))
+        st = self._office([{"entity_id": "light.sw", "state": "off", "attributes": onoff}])
+        self.assertEqual((st["dimmable"], st["on"], st["brightness"]), (False, False, 0))
 
 
 class TestBundledConfig(unittest.TestCase):
