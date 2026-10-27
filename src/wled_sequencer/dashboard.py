@@ -150,10 +150,15 @@ class Dashboard:
             errors.append(_describe_http_error("Home Assistant", e))
         strip_level: dict[str, float] = {}
         playing_strips: set[str] | None = None
+        setup: list[dict[str, Any]] = []
         try:
             for c in (self._engine("GET", "/controllers") or {}).get("controllers", []):
                 for ch in c.get("channels", []):
                     strip_level[ch["target"]] = float(ch.get("brightness") or 0)
+                if "segments reset" in (c.get("warnings") or []):
+                    names = [ch.get("name") for ch in c.get("channels", []) if ch.get("name")]
+                    setup.append({"controller": c.get("id"), "name": names[0] if names else c.get("id"),
+                                  "message": "segments reset"})
             runs_resp = self._engine("GET", "/runs")
             if isinstance(runs_resp, dict) and "runs" in runs_resp:
                 playing_strips = {
@@ -233,6 +238,7 @@ class Dashboard:
             "areas": out,
             "active_scene": active_scene,
             "scene_timestamps": scene_timestamps,
+            "setup": setup,
             "lightd_active_scenes": sorted(active_lightd_scenes) if active_lightd_scenes is not None else [],
             "warnings": errors,
         }

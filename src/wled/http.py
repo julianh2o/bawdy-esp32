@@ -58,3 +58,7 @@ class WledHttp:
 
     def set_state(self, **state: Any) -> dict[str, Any]:
         return self.post("/json/state", state)
+
+    def set_cfg(self, cfg: dict[str, Any]) -> dict[str, Any]:
+        """POST a partial ``/json/cfg`` (e.g. ``{"def": {"ps": 250}}`` for the boot preset)."""
+        return self.post("/json/cfg", cfg)

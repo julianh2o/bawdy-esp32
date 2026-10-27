@@ -49,7 +49,17 @@ curl -X POST $API/patterns/check -d '{"source": "..."}'   # compile only; return
 curl -X PUT  $API/patterns/my_pattern -d '{"source": "..."}'   # save to the library
 curl -X POST $API/identify -d '{"target": "wled_01/2"}'        # blink a channel to find it
 curl -X PUT $API/values/audio.level -d '{"value": 0.8}'        # set a live value for api params
+
+# Known-good segments (Govee boards lose their RGB/White segments on a power cycle)
+curl $API/controllers/govee_01/segments                          # snapshot, live segments, match / reset
+curl -X POST $API/controllers/govee_01/segments/save             # remember the live segments as known-good
+curl -X POST $API/controllers/govee_01/segments/restore -d '{"boot_preset": true}'
+                                                                 # put them back (+ save as WLED boot preset)
 ```
+
+Scenes may not mix `inside` and `outside` targets (channel `zone` in controllers.json) unless saved with
+`"zone": "both"`. Boards whose segments no longer match their snapshot show `"warnings": ["segments reset"]` in
+`GET /controllers`; snapshots live in `SEGMENTS_DIR` (`/config/segments/<controller>.json`).
 
 Errors come back as a non-2xx status with `{"status": "error", "message": "...", "line": n}`. `line` is only
 there for Lua errors.

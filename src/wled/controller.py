@@ -48,6 +48,7 @@ class WledController:
         self.channels: list[Channel] | None = None
         self.outputs: list[Channel] = []  # LED outputs (buses), as /json/cfg lists them
         self.segments: list[Segment] = []
+        self.raw_segments: list[dict[str, Any]] = []  # /json/state "seg" as the board sent it
         self.last_refresh: float | None = None
         self.last_error: str | None = None
         self._seq = 0
@@ -78,6 +79,7 @@ class WledController:
             self.last_error = str(e)
             raise
         self.outputs, self.segments = outputs_from_cfg(cfg), segments_from_state(state)
+        self.raw_segments = [s for s in (state.get("seg") or []) if isinstance(s, dict)]
         self.info, self.channels = info, board_channels(cfg, state, info.led_count)
         self.last_refresh = time.time()
         self.last_error = None

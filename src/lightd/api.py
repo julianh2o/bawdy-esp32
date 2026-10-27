@@ -17,6 +17,7 @@ from lightd.patterns import LibraryError, PatternLibrary
 from lightd.registry import Registry
 from lightd.runs import RunManager
 from lightd.scenes import SceneError, SceneStore, is_active
+from lightd.segments import SegmentError, clean_segments, entry_status
 from lightd.targets import Target, TargetError
 
 log = logging.getLogger(__name__)
@@ -86,6 +87,9 @@ def _route(app: Lightd, method: str, path: str, body: dict[str, Any], query: dic
         # Re-read every board's info, outputs and segments now instead of waiting for the next periodic refresh.
         app.registry.refresh_all()
         return 200, {"status": "ok", "controllers": _controllers(app)}
+
+    if head == "controllers" and len(parts) in (3, 4) and parts[2] == "segments":
+        return _segments(app, method, parts[1], parts[3] if len(parts) == 4 else None, body)
 
     if head == "output" and len(parts) == 1:
         # Master switch: off = send nothing, so the boards show their own WLED effects.
@@ -261,6 +265,43 @@ def _values(app: Lightd, method: str, parts: list[str], body: dict[str, Any]) ->
     raise ApiError(404, f"No endpoint {method} /api/values/{'/'.join(parts)}")
 
 
+def _segments(app: Lightd, method: str, cid: str, action: str | None, body: dict[str, Any]) -> tuple[int, Any]:
+    """Known-good segments of one board.
+
+    GET  /api/controllers/<id>/segments          saved snapshot, live segments, match / reset
+    POST /api/controllers/<id>/segments/save     save the live segments as known-good
+    POST /api/controllers/<id>/segments/restore  {"boot_preset": bool}: put the saved segments back on the board
+    """
+    store = app.registry.segments
+    entry = app.registry.get(cid)
+    if entry is None:
+        raise ApiError(404, f"No controller '{cid}'")
+    if store is None:
+        raise ApiError(409, "Segment snapshots are disabled")
+    live = clean_segments(entry.controller.raw_segments)
+    if action is None and method == "GET":
+        saved = store.load(cid)
+        return 200, {"controller": cid, "snapshot": saved, "live": live, **entry_status(entry)}
+    if action == "save" and method == "POST":
+        if not entry.online:
+            raise ApiError(409, f"{cid} is offline")
+        doc = store.save(cid, live)
+        store.check(entry)
+        log.info("%s: segments saved as known-good by hand (%d segments)", cid, len(doc["seg"]))
+        return 200, {"status": "ok", "snapshot": doc, **entry_status(entry)}
+    if action == "restore" and method == "POST":
+        if not getattr(app.loop, "release", True):
+            raise ApiError(409, "lightd runs with --dry-run: it doesn't change board state over HTTP")
+        if not entry.online:
+            raise ApiError(409, f"{cid} is offline")
+        boot = body.get("boot_preset", False)
+        if not isinstance(boot, bool):
+            raise ApiError(400, "'boot_preset' must be true or false")
+        result = store.restore(entry, app.registry.refresh, boot_preset=boot)
+        return (200 if result["linked"] else 502), result
+    raise ApiError(404, f"No endpoint {method} /api/controllers/{cid}/segments{'/' + action if action else ''}")
+
+
 def _controllers(app: Lightd) -> list[dict[str, Any]]:
     """Live state: board info, channels as the board reports them (plus brightness), online, current IP."""
     controllers = [e.to_dict() for e in app.registry.entries()]
@@ -372,7 +413,7 @@ class _Handler(BaseHTTPRequestHandler):
             status, payload = e.status, {"status": "error", "message": str(e), **e.extra}
         except PatternError as e:
             status, payload = 400, {"status": "error", **e.to_dict()}
-        except (LibraryError, SceneError) as e:
+        except (LibraryError, SceneError, SegmentError) as e:
             status, payload = e.status, {"status": "error", "message": str(e)}
         except (ConfigError, TargetError, WledError, ValueError, TypeError) as e:
             status, payload = 400, {"status": "error", "message": str(e)}

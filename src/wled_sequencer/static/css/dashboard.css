@@ -94,6 +94,8 @@ h2 .hint { text-transform: none; letter-spacing: 0; font-weight: 400; font-size:
   color: var(--err);
   font-size: 14px;
 }
+.setup-banner { display: block; background: #fdf0dc; color: #a8620b; text-decoration: none; font-weight: 600; }
+.setup-banner[hidden] { display: none; }
 
 /* whole-house scene chips */
 .chips { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }

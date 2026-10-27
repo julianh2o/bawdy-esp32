@@ -290,6 +290,11 @@
     banner(data.warnings && data.warnings.length ? data.warnings.join(" · ") : "");
     const anyBusy = [...chips.values()].some((c) => c.classList.contains("busy"));
     if (!anyBusy && "active_scene" in data) setActiveChip(data.active_scene);
+    const setup = data.setup || [];
+    const sb = $("setup-banner");
+    sb.hidden = !setup.length;
+    sb.textContent = setup.length ? `${setup.map((s) => s.name).join(", ")} ${setup.length > 1 ? "need" : "needs"} setup →` : "";
+    sb.title = setup.map((s) => `${s.controller}: ${s.message}`).join("\n");
     const now = Date.now();
     for (const [id, st] of Object.entries(data.areas || {})) {
       const area = areas.get(id);
