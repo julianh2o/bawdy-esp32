@@ -791,7 +791,18 @@ function renderScenePick() {
     }, "×"));
 }
 
+// Check the Lights boxes for every channel a scene drives, so it's clear what it touches.
+function selectSceneTargets(name) {
+  const sc = S.scenes.find((x) => x.name === name);
+  if (!sc) return;
+  S.selected = new Set(sc.entries.flatMap((e) => e.targets));
+  matchPreviewToSelection();
+  savePrefs();
+  renderTargets();
+}
+
 async function activateScene(name) {
+  selectSceneTargets(name);
   try {
     const res = await api("POST", `/scenes/${encodeURIComponent(name)}/activate`);
     if (res.errors.length) banner(`${name} started, except: ${res.errors.join("; ")}`, "err");
@@ -963,7 +974,11 @@ async function bootstrap() {
     const name = e.target.value;
     if (!(await openPattern(name))) renderLibrary(); // cancelled: put the dropdown back
   });
-  $("scene-select").addEventListener("change", (e) => { S.scenePick = e.target.value; renderScenePick(); });
+  $("scene-select").addEventListener("change", (e) => {
+    S.scenePick = e.target.value;
+    renderScenePick();
+    selectSceneTargets(S.scenePick);
+  });
   window.addEventListener("beforeunload", (e) => { if (isDirty()) e.preventDefault(); });
 
   const prefs = loadPrefs();
