@@ -352,6 +352,21 @@ function renderChannel(c, ch, output, ip) {
     }),
     "Reversed");
 
+  // Default zone is inside; stored only when "outside" so untouched channels stay {"name": ""} and get trimmed on save.
+  const zoneSelect = el("select", {
+    class: "channel-zone small",
+    "aria-label": `Channel ${ch + 1} zone`,
+    title: "Inside or outside zone (scenes may not mix zones)",
+    onchange: (e) => {
+      if (e.target.value === "outside") entry.zone = "outside";
+      else delete entry.zone;
+      renderHeader();
+    },
+  },
+    el("option", { value: "inside", selected: (entry.zone || "inside") === "inside" }, "inside"),
+    el("option", { value: "outside", selected: entry.zone === "outside" }, "outside"),
+  );
+
   return el("div", { class: "channel" },
     el("div", { class: "channel-top" },
       el("span", { class: "channel-name" }, `Ch ${ch + 1}`),
@@ -359,6 +374,7 @@ function renderChannel(c, ch, output, ip) {
       linkedTag,
       warnTag,
       el("span", { class: "channel-stat" }, details),
+      zoneSelect,
       reversed,
       extra));
 }

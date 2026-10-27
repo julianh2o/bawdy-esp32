@@ -32,7 +32,7 @@ def build(
     registry = Registry(store, transport=transport, browser=browser)
     library = PatternLibrary(builtin_patterns, user_patterns)
     runs = RunManager(library, state)
-    return Lightd(store, registry, library, runs, RenderLoop(registry, runs, fps=fps, release=not dry_run), SceneStore(scenes, library))
+    return Lightd(store, registry, library, runs, RenderLoop(registry, runs, fps=fps, release=not dry_run), SceneStore(scenes, library, registry))
 
 
 __all__ = ["ApiServer", "Lightd", "build"]

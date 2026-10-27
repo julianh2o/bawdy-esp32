@@ -35,10 +35,15 @@ function pixel(n, t, p) return p.level, p.bands and p.bands[2] or 0, 0 end"""
 
 class TestConfig(unittest.TestCase):
     def test_channels_and_reversed(self):
-        out = validate_controllers({"controllers": {"a": {"ip": "10.0.0.1", "channels": [{"name": " x ", "reversed": True}]}}})
-        self.assertEqual(out["a"]["channels"], [{"name": "x", "reversed": True}])
+        out = validate_controllers({"controllers": {"a": {"ip": "10.0.0.1", "channels": [{"name": " x ", "reversed": True, "zone": "outside"}]}}})
+        self.assertEqual(out["a"]["channels"], [{"name": "x", "reversed": True, "zone": "outside"}])
         self.assertEqual(out["a"]["port"], 4048)
-        for bad in ({"a": {"ip": "10.0.0.1", "channels": [{"reversed": "yes"}]}}, {"a": {}}, {"bad id": {"ip": "1.2.3.4"}}):
+        for bad in (
+            {"a": {"ip": "10.0.0.1", "channels": [{"reversed": "yes"}]}},
+            {"a": {"ip": "10.0.0.1", "channels": [{"zone": "roof"}]}},
+            {"a": {}},
+            {"bad id": {"ip": "1.2.3.4"}},
+        ):
             with self.assertRaises(ConfigError):
                 validate_controllers(bad)
 
@@ -498,6 +503,71 @@ class TestScenes(RunsTest):
         started, errors = self.scenes.activate("s", self.runs)
         self.assertEqual([r.name for r in started], ["solid"])
         self.assertIn("mine on a/1", errors[0])
+
+    def test_rejects_mixed_zones_unless_both(self):
+        reg = make_registry(self.dir, {
+            "in_ctrl": {"ip": "10.0.0.10", "channels": [{"name": "Inside", "zone": "inside"}]},
+            "out_ctrl": {"ip": "10.0.0.11", "channels": [{"name": "Outside", "zone": "outside"}]},
+        }, self.tx)
+        scenes = SceneStore(self.dir / "scenes.json", self.lib, reg)
+        mixed = [
+            {"targets": ["in_ctrl/1"], "pattern": "white"},
+            {"targets": ["out_ctrl/1"], "pattern": "rainbow"},
+        ]
+        with self.assertRaisesRegex(SceneError, "mixes inside .* and outside"):
+            scenes.save("mixed", mixed)
+        with self.assertRaisesRegex(SceneError, "marked 'inside'"):
+            scenes.save("bad_in", [{"targets": ["out_ctrl/1"], "pattern": "rainbow"}], zone="inside")
+        saved = scenes.save("whole_prop", mixed, zone="both")
+        self.assertEqual(saved["zone"], "both")
+
+    def test_bundled_scenes_respect_zone_isolation(self):
+        from wled_sequencer.dashboard import load_config
+        cfg = load_config()
+        targets_cfg = cfg["targets"]
+        controllers = {}
+        for t_str, info in targets_cfg.items():
+            cid, num = t_str.split("/")
+            ch_idx = int(num) - 1
+            entry = controllers.setdefault(cid, {"ip": f"10.0.0.{len(controllers) + 1}", "channels": []})
+            while len(entry["channels"]) <= ch_idx:
+                entry["channels"].append({"name": "", "zone": "inside"})
+            entry["channels"][ch_idx] = {"name": info["name"], "zone": info["zone"]}
+        reg = make_registry(self.dir, controllers, self.tx)
+        scenes = SceneStore(self.dir / "scenes.json", self.lib, reg)
+        inside_targets = sorted(t for t, info in targets_cfg.items() if info["zone"] == "inside")
+        outside_targets = sorted(t for t, info in targets_cfg.items() if info["zone"] == "outside")
+
+        scenes.save("bright", [{"targets": inside_targets, "pattern": "white", "params": {"kelvin": 2700}, "brightness": 1.0}])
+        scenes.save("dim", [{"targets": inside_targets, "pattern": "white", "params": {"kelvin": 2700}, "brightness": 0.25}])
+        scenes.save("party", [{"targets": inside_targets, "pattern": "rainbow", "params": {}, "brightness": 1.0}])
+        scenes.save("off", [{"targets": inside_targets, "pattern": "solid", "params": {"color": "#000000"}, "brightness": 0.0}])
+        scenes.save("pool_on", [
+            {"targets": ["govee_pergola/1"], "pattern": "rainbow", "params": {"repeats": 3.2, "speed": 0.08}, "brightness": 1.0},
+            {"targets": ["govee_03/1"], "pattern": "rainbow", "params": {}, "brightness": 1.0},
+        ])
+        scenes.save("pool_off", [{"targets": outside_targets, "pattern": "solid", "params": {"color": "#000000"}, "brightness": 1.0}])
+
+        for s in scenes.list():
+            scene_name = s["name"]
+            targets = {t for e in s["entries"] for t in e["targets"]}
+            is_outside_scene = scene_name in ("pool_on", "pool_off")
+            if is_outside_scene:
+                self.assertTrue(targets.issubset(set(outside_targets)), f"{scene_name} touches inside: {targets}")
+                other_zone_targets = inside_targets
+            else:
+                self.assertTrue(targets.issubset(set(inside_targets)), f"{scene_name} touches outside: {targets}")
+                other_zone_targets = outside_targets
+
+            self.runs.stop_all()
+            sentinel = self.runs.start(other_zone_targets, pattern="solid", params={"color": "#123456"})
+            before = {str(t): (r.id, r.name, r.values) for t, r in self.runs.assignments().items() if str(t) in other_zone_targets}
+            started, errors = scenes.activate(scene_name, self.runs)
+            self.assertEqual(errors, [], scene_name)
+            self.assertTrue(started, scene_name)
+            after = {str(t): (r.id, r.name, r.values) for t, r in self.runs.assignments().items() if str(t) in other_zone_targets}
+            self.assertEqual(before, after, f"Scene {scene_name} disturbed other zone runs")
+            self.assertEqual(sentinel.id, after[other_zone_targets[0]][0])
 
 
 class TestApi(RunsTest):

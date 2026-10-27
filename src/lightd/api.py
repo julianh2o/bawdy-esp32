@@ -43,7 +43,7 @@ class Lightd:
         self.library = library
         self.runs = runs
         self.loop = loop
-        self.scenes = scenes if scenes is not None else SceneStore(None, library)
+        self.scenes = scenes if scenes is not None else SceneStore(None, library, registry)
         self.logs = log_buffer if log_buffer is not None else logs.buffer
 
     @property
@@ -186,7 +186,7 @@ def _route(app: Lightd, method: str, path: str, body: dict[str, Any], query: dic
                     scene = app.scenes.get(name)
                     return 200, {**scene, "active": is_active(name, scene["entries"], app.runs.assignments())}
                 if method == "PUT":
-                    return 200, app.scenes.save(name, body.get("entries"))
+                    return 200, app.scenes.save(name, body.get("entries"), zone=body.get("zone"))
                 if method == "DELETE":
                     app.scenes.delete(name)
                     return 200, {"status": "ok"}

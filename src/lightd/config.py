@@ -18,6 +18,7 @@ from typing import Any
 
 DEFAULT_DDP_PORT = 4048
 MAX_CHANNELS = 32
+ZONES = {"inside", "outside"}
 
 ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 _HOST_RE = re.compile(r"^[A-Za-z0-9.-]{1,253}$")
@@ -72,6 +73,8 @@ def _validate_channels(cid: str, channels: Any) -> list[dict[str, Any]]:
             raise ConfigError(f"Controller '{cid}' channel {i + 1} name must be text of at most 64 characters")
         if "reversed" in ch and not isinstance(ch["reversed"], bool):
             raise ConfigError(f"Controller '{cid}' channel {i + 1} 'reversed' must be true or false")
+        if "zone" in ch and ch["zone"] not in ZONES:
+            raise ConfigError(f"Controller '{cid}' channel {i + 1} 'zone' must be 'inside' or 'outside'")
         out.append({**ch, "name": name.strip()})
     return out
 

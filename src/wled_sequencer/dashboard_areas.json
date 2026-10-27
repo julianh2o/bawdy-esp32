@@ -1,9 +1,20 @@
 {
   "_comment": "Areas on the dashboard (/). lights = Home Assistant light entities; strips = lightd targets. Override with DASHBOARD_CONFIG=/path/to/file.json.",
+  "targets": {
+    "wled_01/1": {"name": "West Undercabinet", "zone": "inside"},
+    "wled_01/2": {"name": "East Undercabinet", "zone": "inside"},
+    "wled_01/3": {"name": "Disconnected", "zone": "inside"},
+    "govee_01/1": {"name": "West Ceiling", "zone": "inside"},
+    "govee_02/1": {"name": "East Ceiling", "zone": "inside"},
+    "wled_02/1": {"name": "Over Garage Door", "zone": "inside"},
+    "govee_03/1": {"name": "Bawdy Poolside", "zone": "outside"},
+    "govee_pergola/1": {"name": "Pergola", "zone": "outside"}
+  },
   "areas": [
     {
       "id": "west",
       "name": "West",
+      "zone": "inside",
       "lights": ["light.c2", "light.c3", "light.c5", "light.c6", "light.c7", "light.c8", "light.c10", "light.c11",
                  "light.c12", "light.c17", "light.c24", "light.hue_white_1"],
       "strips": ["wled_01/1", "govee_01/1", "wled_02/1"]
@@ -11,26 +22,30 @@
     {
       "id": "east",
       "name": "East",
+      "zone": "inside",
       "lights": ["light.c9"],
       "strips": ["wled_01/2", "govee_02/1"]
     },
     {
       "id": "office",
       "name": "Office",
+      "zone": "inside",
       "lights": ["light.c1", "light.n1", "light.n2"],
       "strips": []
     },
     {
       "id": "red_room",
       "name": "Red Room",
+      "zone": "inside",
       "lights": ["light.c4"],
       "strips": []
     },
     {
       "id": "pool",
       "name": "Pool",
+      "zone": "outside",
       "lights": ["light.c13", "light.c14", "light.c15", "light.c16", "light.c18", "light.c19"],
-      "strips": ["govee_03/1"]
+      "strips": ["govee_03/1", "govee_pergola/1"]
     }
   ],
   "area_scenes": {
