@@ -46,7 +46,7 @@
 
       <div class="column-head pe-library-head">
         <h2 id="library-heading">Library</h2>
-        <button id="new-btn" class="btn btn-small" title="Start a new pattern">+ New</button>
+        <button id="new-btn" class="btn btn-small" title="Empty sandbox">+ New</button>
       </div>
       <div id="library-list" class="pe-list"></div>
       <div class="pe-pick">
@@ -58,7 +58,7 @@
       <button id="code-toggle" type="button" class="pe-code-toggle" aria-expanded="false" aria-controls="editor"></button>
       <div class="pe-editor-head">
         <h2 id="editor-heading" class="sr-only">Editor</h2>
-        <input type="text" id="name-input" placeholder="pattern-name" aria-label="Pattern name" spellcheck="false">
+        <input type="text" id="name-input" placeholder="sandbox" aria-label="Pattern name" spellcheck="false">
         <span id="source-tag" class="tag"></span>
         <span class="spacer"></span>
         <span id="dirty-indicator" class="muted small"></span>
@@ -71,6 +71,7 @@
       <div id="assistant" class="card pe-assistant" hidden>
         <div class="row">
           <strong>Assistant</strong>
+          <select id="example-select" class="pe-examples" aria-label="Load an example pattern into the sandbox" hidden></select>
           <span id="assistant-model" class="muted small"></span>
           <span class="spacer"></span>
           <button id="assistant-clear" class="btn btn-small btn-ghost" title="Start a new conversation">New chat</button>

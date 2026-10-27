@@ -193,12 +193,23 @@ class TestLua(unittest.TestCase):
         self.assertLess(time.monotonic() - t0, 1.0)
 
     def test_builtin_patterns_compile_and_render(self):
-        lib = PatternLibrary(REPO / "patterns", None)
+        lib = PatternLibrary(REPO / "patterns", None, REPO / "patterns" / "examples")
         names = lib.names()
-        self.assertIn("rainbow", names)
+        # Only the built-ins scenes use stay in the library; the rest are examples now.
+        self.assertEqual(names, ["rainbow", "solid", "twinkle", "white"])
         for name in names:
             data = Pattern(lib.source(name)).render(50, 1.5)
             self.assertEqual(len(data), 150, name)
+        examples = lib.examples()
+        self.assertEqual([e["name"] for e in examples], ["breathe", "chase", "fire", "gradient", "rainbow", "scanner",
+                                                         "solid", "strobe", "twinkle", "wave", "white"])
+        for e in examples:
+            self.assertEqual(len(Pattern(e["source"]).render(50, 1.5)), 150, e["name"])
+        self.assertEqual(lib.example("chase")["source"], (REPO / "patterns" / "examples" / "chase.lua").read_text())
+        with self.assertRaises(LibraryError):
+            lib.get("chase")  # an example isn't runnable by name
+        with self.assertRaises(LibraryError):
+            lib.example("../white")
 
 
 class TestLibrary(unittest.TestCase):
@@ -457,7 +468,7 @@ class TestScenes(RunsTest):
         for entries, msg in [
             ([], "non-empty"),
             ([{"targets": ["a/1"], "pattern": "nope"}], "no pattern named"),
-            ([ok, {"targets": ["a/2", "a/1"], "pattern": "fire"}], "entries 1 and 2"),
+            ([ok, {"targets": ["a/2", "a/1"], "pattern": "twinkle"}], "entries 1 and 2"),
             ([{**ok, "brightness": 2}], "brightness"),
             ([{**ok, "params": [1]}], "params"),
             ([{"targets": ["a"], "pattern": "solid"}], "Entry 1"),
@@ -492,7 +503,7 @@ class TestScenes(RunsTest):
         restored.restore()
         self.assertTrue(is_active("party", entries, restored.assignments()))
 
-        self.runs.start(["a/2"], pattern="fire")
+        self.runs.start(["a/2"], pattern="twinkle")
         self.assertFalse(is_active("party", entries, self.runs.assignments()))
 
     def test_activate_skips_entries_that_fail(self):
@@ -641,7 +652,7 @@ class TestApi(RunsTest):
         self.assertEqual(self.call("GET", "/api/logs?level=loud")[0], 400)
 
     def test_run_lifecycle(self):
-        status, run = self.call("POST", "/api/runs", {"targets": ["a/1"], "pattern": "chase", "params": {"width": 3}})
+        status, run = self.call("POST", "/api/runs", {"targets": ["a/1"], "pattern": "twinkle", "params": {"width": 3}})
         self.assertEqual(status, 200, run)
         self.assertEqual(run["params"], {"width": 3})
         status, run = self.call("PATCH", f"/api/runs/{run['id']}", {"params": {"speed": 10}})
@@ -690,6 +701,15 @@ class TestApi(RunsTest):
         self.assertEqual(self.call("DELETE", "/api/patterns/rainbow")[0], 409)
         status, text = self.call("GET", "/api/runtime.lua")
         self.assertIn("function M.render_hex", text)
+
+    def test_examples(self):
+        self.server.httpd.app.library = PatternLibrary(REPO / "patterns", self.dir / "user", REPO / "patterns" / "examples")
+        status, res = self.call("GET", "/api/examples")
+        self.assertEqual(status, 200)
+        self.assertIn("strobe", [e["name"] for e in res["examples"]])
+        self.assertIn("function pixel", self.call("GET", "/api/examples/wave")[1]["source"])
+        self.assertEqual(self.call("GET", "/api/examples/nope")[0], 404)
+        self.assertNotIn("strobe", [p["name"] for p in self.call("GET", "/api/patterns")[1]["patterns"]])
 
     def test_stop_endpoint(self):
         self.call("POST", "/api/runs", {"targets": ["a/1", "a/2"], "source": RED})
@@ -765,7 +785,7 @@ class TestApi(RunsTest):
         self.assertEqual(self.call("PUT", "/api/output", {})[0], 400)
 
     def test_scenes(self):
-        entries = [{"targets": ["a/1"], "pattern": "chase", "params": {"width": 3}, "brightness": 0.5}]
+        entries = [{"targets": ["a/1"], "pattern": "twinkle", "params": {"width": 3}, "brightness": 0.5}]
         status, res = self.call("PUT", "/api/scenes/party", {"entries": entries})
         self.assertEqual(status, 200, res)
         self.assertEqual(self.call("PUT", "/api/scenes/bad", {"entries": [{"targets": ["a/1"], "pattern": "x"}]})[0], 400)

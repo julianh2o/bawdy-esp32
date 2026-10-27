@@ -22,9 +22,26 @@ class LibraryError(ValueError):
 
 
 class PatternLibrary:
-    def __init__(self, builtin_dir: Path | str | None, user_dir: Path | str | None) -> None:
+    def __init__(self, builtin_dir: Path | str | None, user_dir: Path | str | None,
+                 examples_dir: Path | str | None = None) -> None:
         self.builtin_dir = Path(builtin_dir) if builtin_dir else None
         self.user_dir = Path(user_dir) if user_dir else None
+        # Plain example files for the editor's "load example pattern" list. Not part of the library: they can't be
+        # run by name or put in scenes; loading one gives an unsaved copy.
+        self.examples_dir = Path(examples_dir) if examples_dir else None
+
+    def examples(self) -> list[dict[str, Any]]:
+        """Example patterns: name and source, sorted by name."""
+        if self.examples_dir is None or not self.examples_dir.is_dir():
+            return []
+        return [{"name": p.stem, "source": p.read_text(encoding="utf-8")}
+                for p in sorted(self.examples_dir.glob("*.lua")) if NAME_RE.match(p.stem)]
+
+    def example(self, name: str) -> dict[str, Any]:
+        path = self.examples_dir / f"{name}.lua" if self.examples_dir and NAME_RE.match(name) else None
+        if path is None or not path.is_file():
+            raise LibraryError(f"No example pattern named '{name}'", 404)
+        return {"name": name, "source": path.read_text(encoding="utf-8")}
 
     def _path(self, name: str) -> tuple[Path, bool] | None:
         if not NAME_RE.match(name):

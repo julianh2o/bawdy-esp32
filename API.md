@@ -8,8 +8,10 @@
 - **Target**: `controller/channel`, 1-based, e.g. `wled_01/2`. A channel is a WLED segment. A Govee light's RGB and
   white segments are one linked channel (e.g. `govee_01/1`). List them with `GET /controllers`.
 - **Pattern**: Lua defining `pixel(n, t, p)` that returns `r, g, b[, w]` in 0..1. `n` is 0..`COUNT-1`, `t` is Unix
-  time in seconds, `p` holds params. Built-ins: `solid`, `white`, `rainbow`, `chase`, `breathe`, `fire`, `gradient`,
-  `scanner`, `strobe`, `twinkle`, `wave`. Leave `w` out and white LEDs are used automatically.
+  time in seconds, `p` holds params. Built-ins (used by scenes): `solid`, `white`, `rainbow`, `twinkle`. More examples
+  (`chase`, `breathe`, `fire`, `gradient`, `scanner`, `strobe`, `wave`, …) are plain files in `patterns/examples/`,
+  listed by `GET /examples` and `GET /examples/<name>`; they aren't runnable by name until saved as your own pattern.
+  Leave `w` out and white LEDs are used automatically.
 - **Run**: a pattern + params on one or more targets. Starting a run on a channel replaces whatever ran there.
 - **Scene**: a saved set of runs, activated by name.
 - **API value**: a key/value pair stored in lightd (in memory) and set over REST, e.g. live audio levels. Patterns

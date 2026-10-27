@@ -142,6 +142,13 @@ def _route(app: Lightd, method: str, path: str, body: dict[str, Any], query: dic
     if head == "identify" and method == "POST":
         return 200, _identify(app, body)
 
+    if head == "examples" and method == "GET":
+        # Example patterns for the editor (plain files, not in the library): list, or one by name.
+        if len(parts) == 1:
+            return 200, {"examples": app.library.examples()}
+        if len(parts) == 2:
+            return 200, app.library.example(parts[1])
+
     if head == "patterns":
         if len(parts) == 1 and method == "GET":
             return 200, {"patterns": app.library.list()}
