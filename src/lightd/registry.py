@@ -43,6 +43,10 @@ class ControllerEntry:
     def reversed(self, index: int) -> bool:
         return bool(self.channel_config(index).get("reversed"))
 
+    def zone(self, index: int) -> str:
+        z = self.channel_config(index).get("zone")
+        return z if z in ("inside", "outside") else "inside"
+
     def to_dict(self) -> dict[str, Any]:
         c = self.controller
         board_channels = c.channels or []
@@ -57,6 +61,7 @@ class ControllerEntry:
                 "number": i + 1,
                 "target": f"{self.id}/{i + 1}",
                 "name": cfg.get("name", ""),
+                "zone": self.zone(i),
                 "reversed": bool(cfg.get("reversed")),
                 "on_board": ch is not None,
                 **({k: v for k, v in ch.to_dict().items() if k not in ("index", "name")} if ch else {"length": None}),

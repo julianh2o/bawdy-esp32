@@ -107,6 +107,10 @@ class TestDashboard(unittest.TestCase):
         self.assertNotIn(TOKEN, json.dumps(body))
 
     def test_state(self) -> None:
+        self.engine_routes[("GET", "/api/runs")] = (200, {"runs": [
+            {"targets": ["wled_01/1"], "pattern": "smooth"},
+            {"targets": ["govee_03/1"], "pattern": "rainbow"},
+        ]})
         status, body = self.req("GET", "/api/dashboard/state")
         self.assertEqual(status, 200)
         areas = body["areas"]
@@ -114,6 +118,48 @@ class TestDashboard(unittest.TestCase):
         self.assertIsNone(areas["office"]["brightness"])  # only light unavailable, no strips
         self.assertEqual(areas["pool"]["brightness"], 40)  # no bulbs: strips
         self.assertEqual(self.ha_calls[0][2], f"Bearer {TOKEN}")
+
+    def test_pool_state_averages_ha_lights_and_strips(self) -> None:
+        cfg = {
+            **CONFIG,
+            "areas": [
+                {"id": "pool", "name": "Pool", "lights": ["light.a", "light.b"], "strips": ["govee_03/1", "govee_pergola/1"]},
+            ],
+        }
+        self.engine_routes[("GET", "/api/controllers")] = (200, {"controllers": [
+            {"id": "govee_03", "channels": [{"target": "govee_03/1", "brightness": 0.4}]},
+            {"id": "govee_pergola", "channels": [{"target": "govee_pergola/1", "brightness": 0.6}]},
+        ]})
+        self.engine_routes[("GET", "/api/runs")] = (200, {"runs": [
+            {"targets": ["govee_03/1", "govee_pergola/1"], "pattern": "rainbow"},
+        ]})
+        self.app.server.dashboard = Dashboard(cfg, f"http://127.0.0.1:{self.ha.server_port}", TOKEN,
+                                              f"http://127.0.0.1:{self.engine.server_port}", timeout=3)
+        status, body = self.req("GET", "/api/dashboard/state")
+        self.assertEqual(status, 200)
+        # light.a is 100%, govee_03/1 is 40%, govee_pergola/1 is 60% -> mean(100, 40, 60) = 67
+        self.assertEqual(body["areas"]["pool"]["brightness"], 67)
+        self.assertTrue(body["areas"]["pool"]["on"])
+
+    def test_idle_strips_reats_solid_black_as_idle_and_keeps_running_patterns(self) -> None:
+        cfg = {
+            **CONFIG,
+            "areas": [
+                {"id": "pool", "name": "Pool", "lights": [], "strips": ["govee_03/1", "govee_pergola/1"]},
+            ],
+        }
+        self.engine_routes[("GET", "/api/runs")] = (200, {"runs": [
+            {"targets": ["govee_03/1"], "pattern": "solid", "params": {"color": "#000000"}},
+            {"targets": ["govee_pergola/1"], "pattern": "rainbow", "params": {}},
+        ]})
+        self.app.server.dashboard = Dashboard(cfg, f"http://127.0.0.1:{self.ha.server_port}", TOKEN,
+                                              f"http://127.0.0.1:{self.engine.server_port}", timeout=3)
+        self.req("PUT", "/api/dashboard/areas/pool/brightness", {"brightness": 50})
+        # govee_03/1 was solid #000000 (off), so it gets warm white; govee_pergola/1 was rainbow, so it is left alone
+        self.assertIn(("POST", "/api/runs", None,
+                       {"targets": ["govee_03/1"], "pattern": "white", "params": {"kelvin": 2700}}), self.engine_calls)
+        self.assertIn(("PUT", "/api/brightness", None,
+                       {"targets": ["govee_03/1", "govee_pergola/1"], "brightness": 0.5}), self.engine_calls)
 
     def test_brightness_drives_ha_lights_and_strips(self) -> None:
         status, body = self.req("PUT", "/api/dashboard/areas/west/brightness", {"brightness": 42.4})
@@ -201,6 +247,13 @@ class TestBundledConfig(unittest.TestCase):
         self.assertEqual(config["areas"][3]["lights"], ["light.c4"])
         self.assertFalse([e for e in everything if e.startswith("light.l")], "smart plugs stay off the sliders")
         self.assertEqual(set(config["area_scenes"]), {"bright", "dim", "party"})
+        pool = next(a for a in config["areas"] if a["id"] == "pool")
+        self.assertEqual(pool["strips"], ["govee_03/1", "govee_pergola/1"])
+        self.assertNotIn("wled_02/1", pool["strips"])
+        targets = config.get("targets", {})
+        self.assertEqual(targets["wled_02/1"], {"name": "Over Garage Door", "zone": "inside"})
+        self.assertEqual(targets["govee_03/1"]["zone"], "outside")
+        self.assertEqual(targets["govee_pergola/1"]["zone"], "outside")
 
 
 if __name__ == "__main__":

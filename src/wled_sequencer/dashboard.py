@@ -112,7 +112,7 @@ class Dashboard:
         }
 
     def state(self) -> dict[str, Any]:
-        """Each area's brightness 0..100: the mean of its lit HA lights (0 when all off); strips when it has no lights."""
+        """Each area's brightness 0..100: the mean of its lit HA lights and active strips (0 when all off)."""
         states: dict[str, dict[str, Any]] = {}
         errors: list[str] = []
         try:
@@ -122,10 +122,18 @@ class Dashboard:
         except Exception as e:
             errors.append(_describe_http_error("Home Assistant", e))
         strip_level: dict[str, float] = {}
+        playing_strips: set[str] | None = None
         try:
             for c in (self._engine("GET", "/controllers") or {}).get("controllers", []):
                 for ch in c.get("channels", []):
                     strip_level[ch["target"]] = float(ch.get("brightness") or 0)
+            runs_resp = self._engine("GET", "/runs")
+            if isinstance(runs_resp, dict) and "runs" in runs_resp:
+                playing_strips = {
+                    t for r in runs_resp.get("runs", [])
+                    if not (r.get("pattern") == "solid" and str((r.get("params") or {}).get("color", "")).lower() in ("#000000", "#000"))
+                    for t in r.get("targets", [])
+                }
         except Exception as e:
             errors.append(_describe_http_error("lightd", e))
 
@@ -134,19 +142,39 @@ class Dashboard:
             lights = [states[e] for e in area.get("lights", []) if e in states]
             available = [s for s in lights if s.get("state") not in ("unavailable", "unknown")]
             lit = [s for s in available if s.get("state") == "on"]
-            if available:
-                levels = [(s.get("attributes") or {}).get("brightness") or 255 for s in lit]
-                brightness = round(sum(levels) / len(levels) / 255 * 100) if levels else 0
+            light_pcts = [((s.get("attributes") or {}).get("brightness") or 255) / 255 * 100 for s in lit]
+
+            known_strips = [t for t in area.get("strips", []) if t in strip_level]
+            if playing_strips is None:
+                lit_strips = [strip_level[t] * 100 for t in known_strips if strip_level[t] > 0]
             else:
-                strips = [strip_level[t] for t in area.get("strips", []) if t in strip_level]
-                brightness = round(sum(strips) / len(strips) * 100) if strips else None
-            out[area["id"]] = {"brightness": brightness, "on": bool(lit), "available": len(available),
+                lit_strips = [strip_level[t] * 100 for t in known_strips if t in playing_strips and strip_level[t] > 0]
+
+            if area["id"] == "pool":
+                samples = light_pcts + ([strip_level[t] * 100 for t in known_strips if (playing_strips is None or t in playing_strips)] if not light_pcts else lit_strips)
+                has_sources = bool(available or known_strips)
+            elif available:
+                samples = light_pcts
+                has_sources = True
+            else:
+                samples = [strip_level[t] * 100 for t in known_strips if (playing_strips is None or t in playing_strips)]
+                has_sources = bool(known_strips)
+
+            if has_sources:
+                brightness = round(sum(samples) / len(samples)) if samples else 0
+            else:
+                brightness = None
+            out[area["id"]] = {"brightness": brightness, "on": bool(lit or lit_strips), "available": len(available),
                                "lights": len(area.get("lights", []))}
         return {"areas": out, "warnings": errors}
 
     def _start_idle_strips(self, targets: list[str]) -> None:
-        """Strips with nothing playing stay dark at any brightness, so give idle ones warm white."""
-        busy = {t for run in (self._engine("GET", "/runs") or {}).get("runs", []) for t in run.get("targets", [])}
+        """Strips with nothing playing (or playing solid black from pool_off/off) stay dark, so give them warm white."""
+        busy = {
+            t for run in (self._engine("GET", "/runs") or {}).get("runs", [])
+            if not (run.get("pattern") == "solid" and str((run.get("params") or {}).get("color", "")).lower() in ("#000000", "#000"))
+            for t in run.get("targets", [])
+        }
         idle = [t for t in targets if t not in busy]
         if idle:
             self._engine("POST", "/runs", {"targets": idle, "pattern": "white", "params": {"kelvin": WARM_KELVIN}})
