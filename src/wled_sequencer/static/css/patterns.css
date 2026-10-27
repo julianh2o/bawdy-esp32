@@ -83,6 +83,7 @@
 .pe-item:hover { background: var(--surface-2); }
 .pe-item.current { background: var(--accent-soft); border-color: var(--accent); }
 .pe-item .tag { margin-left: auto; }
+.pe-examples { font-size: 12px; padding: 2px 6px; }
 
 /* ---------- editor ---------- */
 

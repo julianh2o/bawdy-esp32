@@ -24,23 +24,6 @@ const SAVE_ICON = `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="
 // Square "stop" icon, drawn in the button's text color.
 const STOP_ICON = `<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="currentColor"/></svg>`;
 
-const TEMPLATE = `-- pixel(n, t, p) runs for every pixel, every frame.
---   n: pixel number, 0 .. COUNT - 1      t: Unix time in seconds (the same on every channel)
---   p: params (declared below)           return r, g, b in 0 .. 1, and optionally w (white)
---   w lights white LEDs (RGBW strips, linked Govee white); on RGB-only LEDs it's added to r, g, b.
---   Leave w out and white LEDs get the white part of r, g, b automatically. WHITE: true on white-capable LEDs
--- Helpers: hsv(h, s, v), mix(a, b, k), clamp(x, lo, hi), noise(x, y), hash(n, seed), color("#rrggbb")
-
-params = {
-  color = { type = "color", default = "#00c8ff" },
-  speed = { type = "number", default = 1, min = 0, max = 10 },
-}
-
-function pixel(n, t, p)
-  local k = (math.sin(n / COUNT * 6.283 * 3 - t * p.speed * 4) + 1) / 2
-  return p.color.r * k, p.color.g * k, p.color.b * k
-end
-`;
 
 const S = {
   library: [],
@@ -134,7 +117,7 @@ function savePrefs() {
 }
 
 const source = () => editor.getValue();
-const untouched = () => S.current.saved === null && (source() === TEMPLATE || source().trim() === "");
+const untouched = () => S.current.saved === null && source().trim() === "";
 const isDirty = () => !untouched() && (S.current.saved === null || source() !== S.current.saved);
 
 // ---------- errors in the editor ----------
@@ -229,6 +212,15 @@ async function initPreview() {
 
 function compilePreview() {
   if (!S.preview.compile) return;
+  if (!source().trim()) {  // empty sandbox: nothing to compile yet
+    S.preview.ok = false;
+    S.preview.error = null;
+    S.schema = {};
+    showError(null);
+    renderParams();
+    updateButtons();
+    return;
+  }
   const err = S.preview.compile(source());
   S.preview.ok = !err;
   S.preview.error = err || null;
@@ -322,8 +314,7 @@ async function loadLibrary() {
 }
 
 function renderLibrary() {
-  const mine = S.library.filter((p) => !p.builtin);
-  const builtin = S.library.filter((p) => p.builtin);
+  const mine = S.library.filter((p) => !p.builtin || p.modified);
   const item = (p) =>
     el("button", {
       class: `pe-item${p.name === S.current.name && S.current.saved !== null ? " current" : ""}`,
@@ -333,18 +324,14 @@ function renderLibrary() {
     p.modified ? el("span", { class: "tag", title: "Your edited copy is used instead of the built-in" }, "edited") : null,
     p.error ? el("span", { class: "tag err" }, "error") : null);
   $("library-list").replaceChildren(
-    el("div", { class: "pe-group" }, "Mine"),
     ...(mine.length ? mine.map(item) : [el("div", { class: "muted small" }, "Nothing saved yet.")]),
-    el("div", { class: "pe-group" }, "Built-in"),
-    ...builtin.map(item),
   );
   // Narrow screens: the same library as a dropdown; picking a pattern opens it.
   const label = (p) => `${p.name}${p.modified ? " (edited)" : ""}${p.error ? " (error)" : ""}`;
   const select = $("library-select");
   const options = [
-    { value: "", label: S.current.saved === null ? "New pattern (unsaved)" : "Open a pattern…", disabled: true },
+    { value: "", label: S.current.saved === null ? "Sandbox (unsaved)" : "Open a pattern…", disabled: true },
     ...mine.map((p) => ({ value: p.name, label: label(p) })),
-    ...builtin.map((p) => ({ value: p.name, label: `${label(p)} · built-in` })),
   ];
   syncSelect(select, options, S.current.saved !== null && S.library.some((p) => p.name === S.current.name) ? S.current.name : "");
 }
@@ -383,7 +370,7 @@ function newPattern() {
   S.current = { name: "", builtin: false, modified: false, saved: null };
   S.params = {};
   $("name-input").value = "";
-  editor.setValue(TEMPLATE);
+  editor.setValue("");
   restartPreview();
   renderLibrary();
   updateButtons();
@@ -391,8 +378,13 @@ function newPattern() {
 }
 
 async function savePattern() {
-  const name = $("name-input").value.trim();
-  if (!name) { banner("Give the pattern a name first.", "err"); $("name-input").focus(); return; }
+  let name = $("name-input").value.trim();
+  if (!name) {
+    name = (prompt("Save the sandbox as (lowercase letters, digits, - and _):", "") || "").trim();
+    if (!name) return;
+    if (S.library.some((p) => p.name === name) && !confirm(`A pattern named ${name} exists. Replace it?`)) return;
+    $("name-input").value = name;
+  }
   // Saving over a built-in stores an edited copy; ask first unless that built-in is the one open.
   const builtin = S.library.find((p) => p.name === name && p.builtin);
   if (builtin && name !== S.current.name &&
@@ -437,7 +429,7 @@ async function deletePattern() {
 function updateButtons() {
   const { name, builtin, modified, saved } = S.current;
   const typed = $("name-input").value.trim();
-  $("source-tag").textContent = saved === null ? "new"
+  $("source-tag").textContent = saved === null ? "sandbox"
     : typed !== name ? "" : modified ? "edited built-in" : builtin ? "built-in" : "";
   $("dirty-indicator").textContent = isDirty() ? "Unsaved changes" : "";
   $("delete-btn").hidden = saved === null || (builtin && !modified);
@@ -455,7 +447,7 @@ function updateButtons() {
 // Narrow screens: the code editor starts collapsed under the assistant.
 function updateCodeToggle() {
   const open = $("editor").closest(".pe-editor").classList.contains("code-open");
-  const name = $("name-input").value.trim() || "unsaved pattern";
+  const name = $("name-input").value.trim() || "sandbox";
   $("code-toggle").replaceChildren(
     el("span", {}, open ? "▾" : "▸"), "Code",
     el("span", { class: "muted" }, `· ${name}${isDirty() ? " · unsaved changes" : ""}`));
@@ -466,6 +458,41 @@ function toggleCode() {
   $("editor").closest(".pe-editor").classList.toggle("code-open");
   updateCodeToggle();
   editor.refresh(); // CodeMirror measures nothing while hidden
+}
+
+// ---------- example patterns ----------
+
+async function loadExamples() {
+  let examples = [];
+  try {
+    examples = (await api("GET", "/examples")).examples;
+  } catch { /* older lightd without examples */ }
+  const select = $("example-select");
+  select.hidden = !examples.length;
+  select.replaceChildren(
+    el("option", { value: "", disabled: true, selected: true }, "load example pattern ▾"),
+    ...examples.map((e) => el("option", { value: e.name }, e.name)));
+  select.onchange = () => {
+    const ex = examples.find((e) => e.name === select.value);
+    select.value = "";
+    if (ex) loadIntoSandbox(ex.source, `Loaded example ${ex.name}. Save it under a name of your own to keep it.`);
+  };
+}
+
+/** Put code in the editor as an unnamed sandbox (asks first if there are unsaved changes). */
+function loadIntoSandbox(code, message) {
+  if (!confirmDiscard()) return false;
+  S.current = { name: "", builtin: false, modified: false, saved: null };
+  S.params = {};
+  $("name-input").value = "";
+  editor.setValue(code);
+  editor.clearHistory();
+  restartPreview();
+  renderLibrary();
+  updateButtons();
+  savePrefs();
+  if (message) { banner(message, "ok"); setTimeout(() => banner(null), 3500); }
+  return true;
 }
 
 // ---------- controllers & runs ----------
@@ -899,7 +926,7 @@ function togglePlay() {
 
 async function bootstrap() {
   editor = CodeMirror($("editor"), {
-    value: TEMPLATE,
+    value: "",
     mode: "lua",
     lineNumbers: true,
     indentUnit: 2,
@@ -949,7 +976,7 @@ async function bootstrap() {
   }
   requestAnimationFrame(drawPreview);
 
-  initAssistant({
+  const assistantReady = initAssistant({
     getSource: source,
     getName: () => $("name-input").value.trim(),
     // Replace the editor's code; undoable with Ctrl-Z. The pattern keeps its name, so Save updates it.
@@ -975,11 +1002,12 @@ async function bootstrap() {
     },
     banner,
   });
+  assistantReady.then(() => {
+    if ($("assistant").hidden) $("source-tag").after($("example-select"));
+  });
 
-  await Promise.all([loadLibrary(), poll()]);
-  const start = prefs.pattern && S.library.find((p) => p.name === prefs.pattern) ? prefs.pattern : null;
-  if (start) await openPattern(start, { force: true });
-  else compilePreview();
+  await Promise.all([loadLibrary(), poll(), loadExamples()]);
+  compilePreview();  // the editor starts as an empty sandbox
   matchPreviewToSelection();
   renderParams();
   setInterval(poll, POLL_MS);
