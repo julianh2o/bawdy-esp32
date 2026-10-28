@@ -29,7 +29,7 @@ lightd owns the configuration in `config/`:
 |---|---|---|
 | `controllers.json` | Adopted boards: id, IP, port, MAC/host, channel names and `reversed` flags | `/config` page (via lightd), or by hand |
 | `patterns/*.lua` | Your saved patterns | Pattern editor (via lightd) |
-| `scenes.json` | Scenes: named sets of patterns with params on channels | Pattern editor, "Save as scene" (via lightd) |
+| `scenes.json` | Scenes: named sets of patterns with params on channels | Interface (`/interface`): Save / Save as… on the On deck header (via lightd) |
 | `lightd-state.json` | Patterns currently running and channel brightness, restored on restart | lightd |
 
 **Web UI (`http://<docker-host>:8080/config`)** lists the adopted controllers. Each one expands into its channels: the board's LED outputs, with GPIO pins and LED counts as lightd reads them from the board. Name each channel and tick **Reversed** if pixel 0 is at the far end. Below the list, a collapsed "N unadopted boards discovered" section shows boards lightd found on the LAN that aren't adopted yet. **Identify** blinks LEDs white for a few seconds so you can tell which physical strip is which: on a board it blinks every LED, on a channel only that output's LEDs.

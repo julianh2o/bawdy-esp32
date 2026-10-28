@@ -9,6 +9,7 @@
 const MAX_REPAIRS = 2;
 
 let host = null; // editor hooks from patterns.js: getSource, getName, apply, applyAsNew, check, banner
+let enabled = false; // the server has an assistant configured
 const chat = {
   messages: [], // {role: "user"|"assistant", content, note?: true}; notes are shown but not sent
   busy: false,
@@ -161,7 +162,7 @@ function render(streamingMsg = null) {
   const nodes = chat.messages.map((m) => messageNode(m, { streaming: m === streamingMsg }));
   if (!nodes.length) {
     nodes.push(el("div", { class: "muted small pe-chat-empty" },
-      "Ask for a new pattern (“slow ocean waves in teal and purple”) or a change to the code above (“make it twice as fast and add a color param”)."));
+      "Ask for a new pattern (“slow ocean waves in teal and purple”) or a change to the selected pattern’s code (“make it twice as fast and add a color param”)."));
   }
   log.replaceChildren(...nodes);
   if (atBottom || !streamingMsg) log.scrollTop = log.scrollHeight;
@@ -206,11 +207,15 @@ async function streamReply(reply) {
       else if (ev.type === "error") throw new Error(ev.text);
     }
     const now = performance.now();
-    if (now - lastPaint > 80) { lastPaint = now; render(reply); }
+    if (now - lastPaint > 80) {
+      lastPaint = now;
+      render(reply);
+      quickStatus?.(reply.status || (reply.content ? "Writing…" : "Thinking…"));
+    }
   }
 }
 
-async function ask(text, { repairs = 0, auto = false } = {}) {
+async function ask(text, { repairs = 0, auto = false, forceApply = false } = {}) {
   chat.messages.push({ role: "user", content: text, auto });
   const reply = { role: "assistant", content: "", status: "Sending…" };
   chat.messages.push(reply);
@@ -229,16 +234,35 @@ async function ask(text, { repairs = 0, auto = false } = {}) {
   if (!stripThinking(reply.content)) chat.messages.pop(); // nothing came back
   if (failed) chat.messages.push({ role: "assistant", note: true, error: failed !== "Stopped.", content: failed });
   render();
-  if (failed) return;
+  if (failed) return { applied: false, error: failed };
 
   // Test the code it sent; on failure, hand the error back for a fix.
   const code = replyCode(reply.content);
-  if (!code) return;
+  if (!code) return { applied: false, error: null, note: "The assistant answered without code. Open the editor to read it." };
   const result = check(code);
-  if (result === "" && $("assistant-autoapply").checked) host.apply(code);
+  if (result === "" && (forceApply || $("assistant-autoapply").checked)) {
+    host.apply(code);
+    return { applied: true, error: null };
+  }
   if (result && repairs < MAX_REPAIRS) {
-    await ask(`That code fails when I run it:\n\n${result}\n\nFix it and send the complete pattern again.`,
-      { repairs: repairs + 1, auto: true });
+    quickStatus?.("The code failed a test render; asking for a fix…");
+    return ask(`That code fails when I run it:\n\n${result}\n\nFix it and send the complete pattern again.`,
+      { repairs: repairs + 1, auto: true, forceApply });
+  }
+  return { applied: false, error: result || null };
+}
+
+// For the Selected panel's ✨ Ask AI prompt: one message, its working code applied to the selected pattern.
+// The exchange shows up in the editor's chat too. onStatus(text) gets progress lines.
+let quickStatus = null;
+export async function askQuick(text, onStatus) {
+  if (!host || !enabled) return { applied: false, error: "The assistant isn't set up on this server." };
+  if (chat.busy) return { applied: false, error: "The assistant is still busy with the last message." };
+  quickStatus = onStatus;
+  try {
+    return await ask(text, { forceApply: true });
+  } finally {
+    quickStatus = null;
   }
 }
 
@@ -260,9 +284,10 @@ export async function initAssistant(hooks) {
   try {
     info = await (await fetch("/api/assistant")).json();
   } catch {
-    return; // older server without the assistant
+    return false; // older server without the assistant
   }
-  if (!info.enabled) return;
+  if (!info.enabled) return false;
+  enabled = true;
   $("assistant").hidden = false;
   $("assistant-model").textContent = `${info.model}${info.provider ? ` · ${info.provider}` : ""}`;
   $("assistant-form").addEventListener("submit", send);
@@ -282,4 +307,5 @@ export async function initAssistant(hooks) {
     try { localStorage.setItem("lightd.assistant.autoapply", e.target.checked ? "1" : "0"); } catch { /* ignore */ }
   });
   render();
+  return true;
 }
