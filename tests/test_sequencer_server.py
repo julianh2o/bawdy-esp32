@@ -56,6 +56,21 @@ class TestWebServer(unittest.TestCase):
         self.assertIn("/js/config.js", html)
         self.assertEqual(self.get("/js/patterns.js")[0], 200)
 
+    def test_interface_v3_layout(self) -> None:
+        """The Interface stages on deck and sends from one button; the old Lights checkboxes/Run flow are gone."""
+        _, html = self.get("/interface")
+        for id_ in ("selp", "board", "send-btn", "load-btn", "scene-save-btn", "scene-saveas-btn", "scene-delete-btn",
+                    "deck-clear-btn", "stop-all-btn", "ed-scrim", "new-btn", "ask-ai-btn"):
+            self.assertIn(f'id="{id_}"', html)
+        for gone in ("run-btn", "refresh-btn", "save-scene-btn"):
+            self.assertNotIn(f'id="{gone}"', html)
+        _, js = self.get("/js/patterns.js")
+        self.assertIn("lightd.deck", js)  # the deck lives in localStorage
+        self.assertIn("/activate", js)  # Send on an unmodified scene activates it
+        self.assertNotIn('"PATCH"', js)  # no live param PATCHes any more
+        _, config = self.get("/js/config.js")
+        self.assertIn("function wledLink", config)  # setup: IP links to the board's WLED page
+
     def test_no_traversal_or_unknown_files(self) -> None:
         self.assertEqual(self.get("/index.html")[0], 404)
         self.assertIn(self.get("/../server.py")[0], (403, 404))

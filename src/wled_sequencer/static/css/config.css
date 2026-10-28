@@ -249,6 +249,9 @@ input[type="number"] { width: 90px; }
 .ctrl.open .chev { transform: rotate(90deg); }
 .ctrl-id { font-weight: 600; }
 .ctrl-meta { font-size: 12px; color: var(--muted); }
+/* A board's IP, linking to its WLED page */
+.wled-link { color: inherit; text-decoration: underline dotted; text-underline-offset: 2px; }
+.wled-link:hover { color: var(--accent); text-decoration-style: solid; }
 .ctrl-body { border-top: 1px solid var(--border); padding: 8px 12px 12px; display: none; }
 .ctrl.open .ctrl-body { display: block; }
 .ctrl-note { font-size: 12px; margin: 4px 0 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

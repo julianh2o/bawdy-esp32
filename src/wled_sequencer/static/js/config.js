@@ -28,6 +28,19 @@ let nextKey = 1;
 
 // ---------- helpers ----------
 
+// A board's IP as a link to its own WLED page (new tab). It doesn't toggle the controller card it sits in.
+function wledLink(ip) {
+  return el("a", {
+    class: "wled-link", href: `http://${ip}/`, target: "_blank", rel: "noopener",
+    title: `Open WLED on ${ip}`, onclick: (e) => e.stopPropagation(),
+  }, ip);
+}
+
+// ["a", node, null, "b"] -> [a, " · ", node, " · ", b]: a meta line that can hold links.
+function joinMeta(parts) {
+  return parts.filter(Boolean).flatMap((p, i) => (i ? [" · ", p] : [p]));
+}
+
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -249,12 +262,12 @@ function renderControllerCard(c) {
 
   const count = Math.max(outputs.length, c.channels.length);
   const named = c.channels.filter((ch) => ch.name.trim()).length;
-  const meta = [
-    ip || "no IP",
+  const meta = joinMeta([
+    ip ? wledLink(ip) : "no IP",
     c.extra.name,
     board.ledCount ? `${board.ledCount} LEDs` : null,
     count ? `${plural(count, "channel")}${named ? `, ${named} named` : ""}` : null,
-  ].filter(Boolean).join(" · ");
+  ]);
 
   const head = el("div", { class: "ctrl-head", onclick: () => { open ? S.open.delete(c.key) : S.open.add(c.key); renderControllers(); } },
     el("span", { class: "chev" }, "▸"),
@@ -461,8 +474,8 @@ function renderDiscovery() {
             el("div", { class: "disc-info" },
               el("div", {}, info.name || n.instance || n.ip, " ", st),
               el("div", { class: "small muted" },
-                [n.hostname, n.ip, info.led_count ? `${info.led_count} LEDs` : null,
-                  outputs.length ? plural(outputs.length, "output") : null].filter(Boolean).join(" · "))),
+                joinMeta([n.hostname, n.ip ? wledLink(n.ip) : null, info.led_count ? `${info.led_count} LEDs` : null,
+                  outputs.length ? plural(outputs.length, "output") : null]))),
             identifyButton(n.ip, 4048, { ledCount: info.led_count }),
             el("button", { class: "btn btn-small btn-primary", onclick: () => openControllerDialog({ mode: "adopt", node: n }) }, "Adopt…"));
         })

@@ -14,7 +14,7 @@
 <body>
   <header class="topbar">
     <div class="topbar-title">
-      <h1>Patterns</h1>
+      <h1>Interface</h1>
     </div>
     <div class="topbar-actions">
       <label class="switch" title="Output. Off: lightd sends nothing and the boards show their own WLED effects">
@@ -38,56 +38,97 @@
         <h2 id="scenes-heading">Scenes</h2>
       </div>
       <div id="scene-list" class="pe-list" aria-labelledby="scenes-heading"></div>
-      <!-- Narrow screens: the lists collapse into dropdowns; the picked scene's actions sit to the right. -->
-      <div class="pe-pick">
-        <select id="scene-select" aria-label="Scene"></select>
-        <span id="scene-actions" class="pe-pick-actions"></span>
-      </div>
 
       <div class="column-head pe-library-head">
         <h2 id="library-heading">Library</h2>
-        <button id="new-btn" class="btn btn-small" title="Empty sandbox">+ New</button>
       </div>
       <div id="library-list" class="pe-list"></div>
+
+      <!-- Narrow screens: the lists collapse into dropdowns. -->
       <div class="pe-pick">
-        <select id="library-select" aria-label="Open a pattern"></select>
+        <select id="scene-select" aria-label="Stage a scene on deck"></select>
+        <button id="scene-play" class="btn btn-small" type="button" title="Play the picked scene now" aria-label="Play the picked scene now" hidden>▶</button>
+        <select id="library-select" aria-label="Select a library pattern"></select>
       </div>
     </aside>
 
-    <section class="pe-editor" aria-labelledby="editor-heading">
-      <button id="code-toggle" type="button" class="pe-code-toggle" aria-expanded="false" aria-controls="editor"></button>
+    <section class="pe-main" aria-label="Selected pattern, on deck and lights">
+      <!-- Selected: the working copy -->
+      <div id="selp" class="card selp" aria-labelledby="selected-heading">
+        <div class="selp-main">
+          <div class="selp-head">
+            <h2 id="selected-heading" class="selp-h">Selected</h2>
+            <span id="sel-name" class="selp-name"></span>
+            <span id="sel-tag" class="tag"></span>
+            <span id="sel-dirty" class="muted small"></span>
+          </div>
+          <canvas id="sel-canvas" class="selp-canvas" height="30"></canvas>
+          <div id="sel-sub" class="selp-sub"></div>
+          <div id="sel-error" class="pe-error" hidden></div>
+          <form id="wiz" class="wiz" hidden>
+            <textarea id="wiz-input" rows="2" aria-label="Ask the assistant to change the selected pattern"></textarea>
+            <button id="wiz-send" type="submit" class="btn btn-primary btn-small">✨ Apply</button>
+            <button id="wiz-close" type="button" class="btn btn-small btn-ghost" aria-label="Close">✕</button>
+          </form>
+          <div id="wiz-status" class="muted small" hidden></div>
+          <div class="selp-actions">
+            <button id="open-editor-btn" class="btn btn-small" type="button">✎ Open editor</button>
+            <button id="ask-ai-btn" class="btn btn-small" type="button" hidden>✨ Ask AI</button>
+            <button id="new-btn" class="btn btn-small" type="button" title="A new pattern, starting from the solid example">+ New</button>
+            <button id="save-lib-btn" class="btn btn-small" type="button">Save to library</button>
+            <button id="load-btn" class="btn btn-primary btn-small selp-load" type="button">Load to deck ↓</button>
+          </div>
+        </div>
+        <div class="selp-side">
+          <div class="column-head selp-params-head">
+            <h2 id="params-heading">Params</h2>
+            <button id="params-reset" class="btn btn-small btn-ghost" type="button" title="Params and brightness back to where this selection came from">Reset</button>
+          </div>
+          <div id="params-form" class="pe-params" aria-labelledby="params-heading"></div>
+        </div>
+      </div>
+
+      <!-- On deck | Send | Lights, one row per strip -->
+      <div id="board" class="card board">
+        <div class="board-head bh-deck">
+          <h2 id="deck-heading">On deck</h2>
+          <span id="deck-scene" class="deck-scene muted small"></span>
+          <span class="spacer"></span>
+          <span class="row deck-actions">
+            <button id="scene-save-btn" class="btn btn-small" type="button">Save</button>
+            <button id="scene-saveas-btn" class="btn btn-small" type="button" title="Save the deck as a new scene">Save as…</button>
+            <button id="scene-delete-btn" class="btn btn-small btn-ghost btn-danger" type="button">Delete</button>
+            <button id="deck-clear-btn" class="btn btn-small btn-ghost" type="button" title="Empty every deck line">Clear</button>
+          </span>
+        </div>
+        <div class="board-head bh-lights">
+          <h2 id="targets-heading">Lights</h2>
+          <span class="spacer"></span>
+          <button id="stop-all-btn" class="btn btn-small btn-ghost btn-danger" type="button" title="Stop everything; every channel goes black">Stop all</button>
+        </div>
+        <div id="send-rail" class="send-rail">
+          <button id="send-btn" class="btn btn-primary send-btn" type="button">Send ▶</button>
+        </div>
+        <div id="board-rows" class="board-rows"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- The editor, as a modal: name bar, preview on top, then code | assistant -->
+  <div id="ed-scrim" class="ed-scrim" hidden>
+    <div class="ed-modal" role="dialog" aria-modal="true" aria-labelledby="editor-heading">
       <div class="pe-editor-head">
-        <h2 id="editor-heading" class="sr-only">Editor</h2>
-        <input type="text" id="name-input" placeholder="sandbox" aria-label="Pattern name" spellcheck="false">
+        <h2 id="editor-heading" class="sr-only">Pattern editor</h2>
+        <input type="text" id="name-input" placeholder="untitled" aria-label="Pattern name" spellcheck="false">
         <span id="source-tag" class="tag"></span>
+        <select id="example-select" class="pe-examples" aria-label="Start from an example pattern" hidden></select>
         <span class="spacer"></span>
         <span id="dirty-indicator" class="muted small"></span>
-        <button id="delete-btn" class="btn btn-small btn-ghost btn-danger">Delete</button>
-        <button id="save-btn" class="btn btn-small">Save</button>
-      </div>
-      <div id="editor" class="pe-code"></div>
-      <div id="error-bar" class="pe-error" hidden></div>
-
-      <div id="assistant" class="card pe-assistant" hidden>
-        <div class="row">
-          <strong>Assistant</strong>
-          <select id="example-select" class="pe-examples" aria-label="Load an example pattern into the sandbox" hidden></select>
-          <span id="assistant-model" class="muted small"></span>
-          <span class="spacer"></span>
-          <button id="assistant-clear" class="btn btn-small btn-ghost" title="Start a new conversation">New chat</button>
-        </div>
-        <div id="assistant-log" class="pe-chat-log" aria-live="polite"></div>
-        <form id="assistant-form" class="pe-chat-form">
-          <textarea id="assistant-input" rows="2" placeholder="Describe a new pattern, or a change to the code above…"
-            aria-label="Message the assistant"></textarea>
-          <button id="assistant-send" type="submit" class="btn btn-primary">Send</button>
-        </form>
-        <div class="row small muted">
-          <label class="check" title="Put the assistant's code in the editor as soon as it checks out (undo with Ctrl-Z)">
-            <input type="checkbox" id="assistant-autoapply" checked> Apply working code automatically</label>
-          <span class="spacer"></span>
-          <span>Enter to send · Shift-Enter for a new line</span>
-        </div>
+        <button id="delete-btn" class="btn btn-small btn-ghost btn-danger" type="button" hidden>Delete</button>
+        <button id="ed-reset-btn" class="btn btn-small btn-ghost" type="button" title="Code back to where this selection came from">Reset</button>
+        <button id="save-btn" class="btn btn-small" type="button">Save to library</button>
+        <button id="ed-done" class="btn btn-small btn-primary" type="button">Done</button>
+        <button id="ed-close" class="btn btn-small btn-ghost" type="button" aria-label="Close" title="Close (Esc). Your edits stay in the selected pattern">✕</button>
       </div>
 
       <div class="card pe-preview">
@@ -97,37 +138,41 @@
           <span class="spacer"></span>
           <label class="small muted">Pixels <input type="number" id="preview-count" min="1" max="2000" value="150"></label>
           <label class="small muted check"><input type="checkbox" id="preview-reversed"> Reversed</label>
-          <button id="preview-play" class="btn btn-small">Pause</button>
+          <button id="preview-play" class="btn btn-small" type="button">Pause</button>
         </div>
         <canvas id="preview-canvas" height="44"></canvas>
         <div class="row small muted"><span id="preview-time">t = 0.0 s</span><span class="spacer"></span><span id="preview-perf"></span></div>
       </div>
-    </section>
 
-    <aside class="pe-side" aria-labelledby="targets-heading">
-      <div class="column-head">
-        <h2 id="targets-heading">Lights</h2>
-        <span class="row pe-lights-actions">
-          <button id="save-scene-btn" class="btn btn-small" title="Save everything playing now (patterns, params, brightness) as a scene">Save as scene…</button>
-          <button id="stop-all-btn" class="btn btn-small btn-ghost btn-danger" title="Stop everything; all channels go black" aria-label="Stop all"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor"
-            stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v4.5M9.2 6.5v4.5"/></svg></button>
-          <button id="refresh-btn" class="btn btn-small btn-ghost" title="Reload controllers" aria-label="Reload controllers">↻</button>
-        </span>
-      </div>
-      <div id="targets-list" class="stack"></div>
+      <div class="ed-body">
+        <div class="ed-code">
+          <div id="editor" class="pe-code"></div>
+          <div id="error-bar" class="pe-error" hidden></div>
+        </div>
 
-      <div class="column-head pe-params-head">
-        <h2 id="params-heading">Params</h2>
-        <button id="params-reset" class="btn btn-small btn-ghost" title="Every param back to its default">Reset</button>
+        <div id="assistant" class="card pe-assistant" hidden>
+          <div class="row">
+            <strong>Assistant</strong>
+            <span id="assistant-model" class="muted small"></span>
+            <span class="spacer"></span>
+            <button id="assistant-clear" class="btn btn-small btn-ghost" type="button" title="Start a new conversation">New chat</button>
+          </div>
+          <div id="assistant-log" class="pe-chat-log" aria-live="polite"></div>
+          <form id="assistant-form" class="pe-chat-form">
+            <textarea id="assistant-input" rows="2" placeholder="Describe a new pattern, or a change to the code…"
+              aria-label="Message the assistant"></textarea>
+            <button id="assistant-send" type="submit" class="btn btn-primary">Send</button>
+          </form>
+          <div class="row small muted">
+            <label class="check" title="Put the assistant's code in the editor as soon as it checks out (undo with Ctrl-Z)">
+              <input type="checkbox" id="assistant-autoapply" checked> Apply working code automatically</label>
+            <span class="spacer"></span>
+            <span>Enter to send · Shift-Enter for a new line</span>
+          </div>
+        </div>
       </div>
-      <div id="params-form" class="pe-params" aria-labelledby="params-heading"></div>
-
-      <div class="row pe-run-row">
-        <button id="run-btn" class="btn btn-primary" disabled>Run on selected</button>
-      </div>
-      <p id="run-hint" class="muted small"></p>
-    </aside>
-  </main>
+    </div>
+  </div>
 
   <script type="module" src="/js/patterns.js"></script>
 </body>
