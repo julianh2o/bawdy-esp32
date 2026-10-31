@@ -287,3 +287,11 @@ input[type="range"]:disabled { opacity: 0.4; }
 @media (min-width: 700px) {
   .area-name { font-size: 17px; }
 }
+.music { padding: 1rem; margin: 0 0 1rem; border-radius: 1rem; background: var(--card, #fff); }
+.music-row { display:flex; align-items:center; gap:.5rem; min-width:0; }
+.music-row img { width:64px; height:64px; border-radius:.5rem; object-fit:cover; background:var(--surface,#eee); }
+.music-meta { min-width:0; flex:1; display:flex; flex-direction:column; }
+.music-meta strong,.music-meta span { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.music button { min-width:44px; min-height:44px; border:0; border-radius:50%; }
+#music-volume { width:100%; margin-top:1rem; }
+#music-status,#music-jam { min-height:1.2em; margin:.3rem 0; }

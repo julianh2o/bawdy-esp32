@@ -18,6 +18,24 @@
   let activeHouseScene = null;
   let areaScenes = [];
   let toastTimer = 0;
+  let musicEnabled = false;
+
+  async function musicRefresh() {
+    if (!musicEnabled || document.hidden) return;
+    try {
+      const s = await call("GET", "/music");
+      $("music-title").textContent = s.track || "Nothing playing";
+      $("music-artist").textContent = s.artist || "";
+      $("music-play").textContent = s.state === "playing" ? "⏸" : "▶︎";
+      $("music-art").src = s.artwork_url || "";
+      $("music-volume").value = s.volume ?? 0;
+      $("music-status").textContent = s.on_screen ? (s.busy || "") : "The shop account isn't on screen on demeter.";
+      for (const id of ["music-prev", "music-play", "music-next", "music-volume"]) $(id).disabled = !s.on_screen;
+      const jam = $("music-jam"); jam.replaceChildren();
+      if (s.jam.url) { const a = document.createElement("a"); a.textContent = "Join the Jam"; a.href = s.jam.url; a.target = "_blank"; a.rel = "noopener"; jam.append(a); }
+      else if (s.state === "playing") jam.textContent = s.jam.extension_online ? "Starting the Jam…" : "Jam unavailable (Spotify extension offline)";
+    } catch (_) { /* keep dashboard usable during a transient poll failure */ }
+  }
 
   // ---------- helpers ----------
 
@@ -329,6 +347,16 @@
     }
     if (!info.ha) banner("Home Assistant isn't configured (HA_URL / HA_TOKEN), so only the LED strips will respond.");
     areaScenes = info.area_scenes || [];
+    musicEnabled = Boolean(info.music);
+    $("music").hidden = !musicEnabled;
+    if (musicEnabled) {
+      for (const [id, action] of [["music-play","play"],["music-prev","previous"],["music-next","next"]]) $(id).addEventListener("click", async () => {
+        try { await call("POST", `/music/${action}`, {}); await musicRefresh(); } catch (e) { toast(e.message, true); }
+      });
+      let volTimer = 0;
+      $("music-volume").addEventListener("input", (e) => { clearTimeout(volTimer); volTimer = setTimeout(() => call("PUT", "/music/volume", {volume:Number(e.target.value)}).catch(x => toast(x.message, true)), SEND_EVERY_MS); });
+      setInterval(musicRefresh, POLL_MS); musicRefresh();
+    }
     buildHouseScenes(info.house_scenes || []);
     const box = $("areas");
     for (const a of info.areas || []) box.appendChild(buildArea(a));

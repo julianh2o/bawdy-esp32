@@ -185,6 +185,8 @@ The Java GUI is not containerized. CI runs the Python tests before deploying, bu
 
 ## Dashboard
 
+Optional dashboard music controls use `TELEMETER_URL` and `TELEMETER_TOKEN` on the web server. The token stays server-side.
+
 `/` is a phone-first control panel: a brightness slider per area (west, east, office, red room, pool), hold an area
 name for Bright / Dim / Party, and whole-house scene buttons. The pattern editor moved to `/interface`.
 

@@ -22,6 +22,12 @@
     <div id="banner" class="banner" hidden></div>
     <a id="setup-banner" class="banner setup-banner" href="/config" hidden></a>
 
+    <section class="music" id="music" hidden aria-label="Music">
+      <h2>Music</h2><div class="music-row"><img id="music-art" alt="" referrerpolicy="no-referrer"><div class="music-meta"><strong id="music-title">Nothing playing</strong><span id="music-artist"></span></div>
+      <button id="music-prev" aria-label="Previous track">⏮</button><button id="music-play" aria-label="Play or pause">▶︎</button><button id="music-next" aria-label="Next track">⏭</button></div>
+      <input id="music-volume" type="range" min="0" max="100" aria-label="Music volume"><p id="music-status"></p><div id="music-jam"></div>
+    </section>
+
     <section class="house" aria-label="Whole house scenes">
       <h2>Whole house</h2>
       <div id="house-scenes" class="chips"></div>
