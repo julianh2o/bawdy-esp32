@@ -16,6 +16,7 @@ from urllib.parse import unquote, urlparse
 
 from wled_sequencer.assistant import AssistantConfig, AssistantError, build_messages, stream_chat
 from wled_sequencer.dashboard import Dashboard, DashboardError
+from wled_sequencer.music import Music, MusicError
 
 MAX_BODY = 1_000_000  # bytes accepted from the browser on /api/assistant/chat
 
@@ -148,10 +149,25 @@ class SequencerHandler(BaseHTTPRequestHandler):
         if path != "/api/dashboard" and not path.startswith("/api/dashboard/"):
             return False
         dash = self.server.dashboard
+        music = self.server.music
         parts = path.split("/")[3:]
         try:
             if method == "GET" and parts == []:
                 result = dash.describe()
+                result["music"] = music.enabled
+            elif parts and parts[0] == "music":
+                if method == "GET" and parts == ["music"]:
+                    result = music.public(music.state())
+                elif method == "POST" and len(parts) == 2 and parts[1] in ("play", "pause", "next", "previous"):
+                    result = music.public(getattr(music, parts[1])())
+                elif method == "PUT" and parts == ["music", "volume"]:
+                    value = self._read_json().get("volume")
+                    if type(value) is not int or not 0 <= value <= 100:
+                        raise MusicError(400, "Volume must be an integer from 0 to 100.", "bad_request")
+                    result = music.public(music.set_volume(value))
+                else:
+                    self._send_error(404, f"Unknown endpoint: {path}")
+                    return True
             elif method == "GET" and parts == ["state"]:
                 result = dash.state()
             elif method == "PUT" and len(parts) == 3 and parts[0] == "areas" and parts[2] == "brightness":
@@ -165,6 +181,9 @@ class SequencerHandler(BaseHTTPRequestHandler):
                 return True
         except DashboardError as e:
             self._send_error(e.status, str(e))
+            return True
+        except MusicError as e:
+            self._send_json(e.status, {"message": str(e), "code": e.code})
             return True
         self._send_json(200, result)
         return True
@@ -280,11 +299,13 @@ class SequencerServer(ThreadingHTTPServer):
         engine_url: str = "http://127.0.0.1:8765",
         assistant: AssistantConfig | None = None,
         dashboard: Dashboard | None = None,
+        music: Music | None = None,
     ) -> None:
         self.static_dir = static_dir
         self.engine_url = engine_url
         self.assistant = assistant if assistant is not None else AssistantConfig()
         self.dashboard = dashboard if dashboard is not None else Dashboard(engine_url=engine_url)
+        self.music = music if music is not None else Music.from_env()
         super().__init__(server_address, SequencerHandler)
 
 
@@ -299,12 +320,14 @@ class SequencerAppServer:
         engine_url: str = "http://127.0.0.1:8765",
         assistant: AssistantConfig | None = None,
         dashboard: Dashboard | None = None,
+        music: Music | None = None,
     ) -> None:
         self.host = host
         self.port = port
         self.engine_url = engine_url
         self.assistant = assistant if assistant is not None else AssistantConfig()
         self.dashboard = dashboard if dashboard is not None else Dashboard(engine_url=engine_url)
+        self.music = music if music is not None else Music.from_env()
         self.static_dir = Path(static_dir) if static_dir else Path(__file__).resolve().parent / "static"
 
         self.server: SequencerServer | None = None
@@ -317,7 +340,7 @@ class SequencerAppServer:
     def start(self) -> None:
         if self.is_running:
             return
-        self.server = SequencerServer((self.host, self.port), self.static_dir, self.engine_url, self.assistant, self.dashboard)
+        self.server = SequencerServer((self.host, self.port), self.static_dir, self.engine_url, self.assistant, self.dashboard, self.music)
         self.port = self.server.server_port
         self._thread = threading.Thread(target=self.server.serve_forever, daemon=True, name="WledSequencerServer")
         self._thread.start()

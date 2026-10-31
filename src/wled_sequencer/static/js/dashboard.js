@@ -18,6 +18,126 @@
   let activeHouseScene = null;
   let areaScenes = [];
   let toastTimer = 0;
+  // ---------- music (telemeter on demeter, proxied by this server) ----------
+  const BUSY_TEXT = { connecting_speaker: "Connecting to the Polk…", switching_output: "Switching audio…",
+    launching_spotify: "Opening Spotify…", starting_playback: "Starting…" };
+  const ICON_PLAY = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16l13-8z"/></svg>';
+  const ICON_PAUSE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>';
+  const ICON_WAIT = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="18" cy="12" r="2"/></svg>';
+  function setPlayIcon(state) {  // "play" | "pause" | "wait"
+    const btn = $("music-play");
+    btn.innerHTML = state === "pause" ? ICON_PAUSE : state === "wait" ? ICON_WAIT : ICON_PLAY;
+    btn.setAttribute("aria-label", state === "pause" ? "Pause" : state === "wait" ? "Starting music" : "Play");
+  }
+  const music = { enabled: false, playing: false, pending: false, onScreen: true, volTouched: 0, volDragging: false,
+    volSender: 0, volQueued: null, fastPoll: 0 };
+
+  function renderMusic(s) {
+    music.onScreen = !!s.on_screen;
+    music.playing = s.state === "playing";
+    $("music-title").textContent = s.track || "Nothing playing";
+    $("music-artist").textContent = s.artist || "";
+    const img = $("music-art");
+    if (s.artwork_url) { if (img.getAttribute("src") !== s.artwork_url) img.src = s.artwork_url; img.hidden = false; $("music-art-ph").hidden = true; }
+    else { img.hidden = true; img.removeAttribute("src"); $("music-art-ph").hidden = false; }
+    const play = $("music-play");
+    if (!music.pending) {
+      setPlayIcon(music.playing ? "pause" : "play");
+      play.classList.remove("busy");
+    }
+    const vol = $("music-volume");
+    const quiet = music.volDragging || Date.now() - music.volTouched < QUIET_AFTER_TOUCH_MS;
+    if (!quiet && typeof s.volume === "number") vol.value = s.volume;
+    for (const id of ["music-prev", "music-play", "music-next", "music-volume"]) $(id).disabled = !music.onScreen;
+    if (music.pending) $("music-play").disabled = true;
+    const status = $("music-status");
+    const text = !music.onScreen ? "The shop account isn't on screen on demeter." : (s.busy ? (BUSY_TEXT[s.busy] || "Working…") : "");
+    status.textContent = text; status.hidden = !text;
+    renderJam(s);
+  }
+
+  function renderJam(s) {
+    const box = $("music-jam"); box.replaceChildren();
+    const jam = s.jam || {};
+    if (jam.url) {
+      const a = document.createElement("a");
+      a.className = "jam-link"; a.textContent = "Join the Jam"; a.href = jam.url; a.target = "_blank"; a.rel = "noopener";
+      const copy = document.createElement("button");
+      copy.type = "button"; copy.className = "jam-copy"; copy.textContent = "Copy link"; copy.setAttribute("aria-label", "Copy Jam link");
+      copy.addEventListener("click", () => copyText(jam.url));
+      box.append(a, copy);
+    } else if (s.state === "playing" && music.onScreen) {
+      const p = document.createElement("span"); p.className = "muted";
+      p.textContent = jam.extension_online ? "Starting the Jam…" : "Jam unavailable (Spotify extension offline)";
+      box.append(p);
+    }
+    box.hidden = !box.childElementCount;
+  }
+
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); toast("Link copied"); }
+    catch (_) {
+      const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); toast("Link copied"); } catch (e) { toast("Couldn't copy the link", true); }
+      ta.remove();
+    }
+  }
+
+  async function musicRefresh(force = false) {
+    if (!music.enabled || (document.hidden && !force)) return;
+    try { renderMusic(await call("GET", "/music")); }
+    catch (_) { /* keep the dashboard usable during a transient poll failure */ }
+  }
+
+  async function musicAction(action) {
+    try { renderMusic(await call("POST", `/music/${action}`, {})); }
+    catch (e) { toast(e.message, true); }
+  }
+
+  async function musicPlayPause() {
+    if (music.pending) return;
+    if (music.playing) {  // optimistic pause
+      music.playing = false; setPlayIcon("play");
+      return musicAction("pause");
+    }
+    music.pending = true;
+    const btn = $("music-play"); btn.classList.add("busy"); btn.disabled = true; setPlayIcon("wait");
+    music.fastPoll = setInterval(() => musicRefresh(true), 1000);  // live step text while play runs (~30 s max)
+    try { renderMusic(await call("POST", "/music/play", {})); }
+    catch (e) { toast(e.message, true); }
+    finally {
+      clearInterval(music.fastPoll); music.pending = false;
+      btn.disabled = !music.onScreen; btn.classList.remove("busy");
+      setPlayIcon(music.playing ? "pause" : "play");
+      musicRefresh(true);
+    }
+  }
+
+  function sendVolume(value) {  // at most one PUT per SEND_EVERY_MS while dragging; the last value always goes out
+    music.volQueued = value;
+    if (music.volSender) return;
+    const flush = () => {
+      if (music.volQueued === null) { music.volSender = 0; return; }
+      const v = music.volQueued; music.volQueued = null;
+      call("PUT", "/music/volume", { volume: v }).catch((x) => toast(x.message, true));
+      music.volSender = setTimeout(flush, SEND_EVERY_MS);
+    };
+    flush();
+  }
+
+  function setupMusic() {
+    $("music-play").addEventListener("click", musicPlayPause);
+    $("music-prev").addEventListener("click", () => musicAction("previous"));
+    $("music-next").addEventListener("click", () => musicAction("next"));
+    const vol = $("music-volume");
+    vol.addEventListener("pointerdown", () => { music.volDragging = true; music.volTouched = Date.now(); });
+    const release = () => { music.volDragging = false; music.volTouched = Date.now(); };
+    vol.addEventListener("pointerup", release); vol.addEventListener("pointercancel", release); vol.addEventListener("change", release);
+    vol.addEventListener("input", () => { music.volTouched = Date.now(); sendVolume(Math.round(Number(vol.value))); });
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) musicRefresh(); });
+    setInterval(musicRefresh, POLL_MS);
+    musicRefresh();
+  }
 
   // ---------- helpers ----------
 
@@ -329,6 +449,9 @@
     }
     if (!info.ha) banner("Home Assistant isn't configured (HA_URL / HA_TOKEN), so only the LED strips will respond.");
     areaScenes = info.area_scenes || [];
+    music.enabled = Boolean(info.music);
+    $("music").hidden = !music.enabled;
+    if (music.enabled) { setPlayIcon("play"); setupMusic(); }
     buildHouseScenes(info.house_scenes || []);
     const box = $("areas");
     for (const a of info.areas || []) box.appendChild(buildArea(a));

@@ -63,6 +63,8 @@ services:
       HA_URL: ${HA_URL:-}
       HA_TOKEN: ${HA_TOKEN:-}
       DASHBOARD_CONFIG: ${DASHBOARD_CONFIG:-}
+      TELEMETER_URL: ${TELEMETER_URL:-}
+      TELEMETER_TOKEN: ${TELEMETER_TOKEN:-}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:${WEB_PORT:-8080}/', timeout=2)"]
       interval: 10s

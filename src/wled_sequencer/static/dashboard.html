@@ -22,6 +22,24 @@
     <div id="banner" class="banner" hidden></div>
     <a id="setup-banner" class="banner setup-banner" href="/config" hidden></a>
 
+    <section class="music" id="music" hidden aria-label="Music">
+      <h2>Music</h2>
+      <div class="music-card">
+        <div class="music-row">
+          <div class="music-art"><img id="music-art" alt="" referrerpolicy="no-referrer" hidden><span id="music-art-ph" class="petal" aria-hidden="true">✿</span></div>
+          <div class="music-meta"><strong id="music-title">Nothing playing</strong><span id="music-artist"></span></div>
+        </div>
+        <div class="music-controls">
+          <button type="button" id="music-prev" class="music-btn" aria-label="Previous track"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
+          <button type="button" id="music-play" class="music-btn music-play" aria-label="Play"></button>
+          <button type="button" id="music-next" class="music-btn" aria-label="Next track"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg></button>
+        </div>
+        <input id="music-volume" type="range" min="0" max="100" value="0" aria-label="Music volume">
+        <p id="music-status" class="music-status" hidden></p>
+        <div id="music-jam" class="music-jam" hidden></div>
+      </div>
+    </section>
+
     <section class="house" aria-label="Whole house scenes">
       <h2>Whole house</h2>
       <div id="house-scenes" class="chips"></div>
