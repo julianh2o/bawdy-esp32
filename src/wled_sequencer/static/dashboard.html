@@ -22,31 +22,29 @@
     <div id="banner" class="banner" hidden></div>
     <a id="setup-banner" class="banner setup-banner" href="/config" hidden></a>
 
+    <section class="house" aria-label="Whole house scenes">
+      <div id="house-scenes" class="chips"></div>
+    </section>
+
     <section class="music" id="music" hidden aria-label="Music">
-      <h2>Music</h2>
       <div class="music-card">
         <div class="music-row">
           <div class="music-art"><img id="music-art" alt="" referrerpolicy="no-referrer" hidden><span id="music-art-ph" class="petal" aria-hidden="true">✿</span></div>
           <div class="music-meta"><strong id="music-title">Nothing playing</strong><span id="music-artist"></span></div>
-        </div>
-        <div class="music-controls">
           <button type="button" id="music-prev" class="music-btn" aria-label="Previous track"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
           <button type="button" id="music-play" class="music-btn music-play" aria-label="Play"></button>
           <button type="button" id="music-next" class="music-btn" aria-label="Next track"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg></button>
         </div>
-        <input id="music-volume" type="range" min="0" max="100" value="0" aria-label="Music volume">
-        <p id="music-status" class="music-status" hidden></p>
-        <div id="music-jam" class="music-jam" hidden></div>
+        <div class="music-volume-row">
+          <input id="music-volume" type="range" min="0" max="100" value="0" aria-label="Music volume">
+          <button type="button" id="music-jam" class="jam-button" aria-label="Spotify Jam" title="Spotify Jam">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1.8a10.2 10.2 0 1 0 0 20.4 10.2 10.2 0 0 0 0-20.4Zm4.68 14.72a.63.63 0 0 1-.87.21c-2.38-1.45-5.37-1.78-8.9-.98a.63.63 0 1 1-.28-1.23c3.86-.88 7.18-.5 9.85 1.13.3.18.39.57.2.87Zm1.24-2.75a.79.79 0 0 1-1.08.26c-2.72-1.67-6.88-2.15-10.1-1.18a.79.79 0 1 1-.46-1.51c3.68-1.12 8.26-.58 11.38 1.34.37.22.49.71.26 1.09Zm.1-2.86c-3.26-1.94-8.65-2.12-11.77-1.17a.94.94 0 1 1-.55-1.8c3.58-1.09 9.53-.88 13.29 1.35a.94.94 0 0 1-.97 1.62Z"/></svg>
+          </button>
+        </div>
       </div>
     </section>
 
-    <section class="house" aria-label="Whole house scenes">
-      <h2>Whole house</h2>
-      <div id="house-scenes" class="chips"></div>
-    </section>
-
     <section aria-label="Areas">
-      <h2>Areas <span class="hint">hold a name for scenes</span></h2>
       <div id="areas" class="areas"></div>
     </section>
   </main>
