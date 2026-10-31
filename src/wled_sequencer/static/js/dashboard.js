@@ -50,28 +50,19 @@
     if (!quiet && typeof s.volume === "number") vol.value = s.volume;
     for (const id of ["music-prev", "music-play", "music-next", "music-volume"]) $(id).disabled = !music.onScreen;
     if (music.pending) $("music-play").disabled = true;
-    const status = $("music-status");
     const text = !music.onScreen ? "The shop account isn't on screen on demeter." : (s.busy ? (BUSY_TEXT[s.busy] || "Working…") : "");
-    status.textContent = text; status.hidden = !text;
+    if (text && text !== music.lastStatus) toast(text, true);
+    music.lastStatus = text;
     renderJam(s);
   }
 
   function renderJam(s) {
-    const box = $("music-jam"); box.replaceChildren();
+    const button = $("music-jam");
     const jam = s.jam || {};
-    if (jam.url) {
-      const a = document.createElement("a");
-      a.className = "jam-link"; a.textContent = "Join the Jam"; a.href = jam.url; a.target = "_blank"; a.rel = "noopener";
-      const copy = document.createElement("button");
-      copy.type = "button"; copy.className = "jam-copy"; copy.textContent = "Copy link"; copy.setAttribute("aria-label", "Copy Jam link");
-      copy.addEventListener("click", () => copyText(jam.url));
-      box.append(a, copy);
-    } else if (s.state === "playing" && music.onScreen) {
-      const p = document.createElement("span"); p.className = "muted";
-      p.textContent = jam.extension_online ? "Starting the Jam…" : "Jam unavailable (Spotify extension offline)";
-      box.append(p);
-    }
-    box.hidden = !box.childElementCount;
+    music.jamUrl = jam.url || "";
+    music.jamStatus = jam.extension_online ? "Starting the Jam…" : "Jam unavailable (Spotify extension offline)";
+    button.classList.toggle("dimmed", !music.jamUrl);
+    button.setAttribute("aria-label", music.jamUrl ? "Open Spotify Jam (hold to copy link)" : "Spotify Jam unavailable");
   }
 
   async function copyText(text) {
@@ -129,6 +120,12 @@
     $("music-play").addEventListener("click", musicPlayPause);
     $("music-prev").addEventListener("click", () => musicAction("previous"));
     $("music-next").addEventListener("click", () => musicAction("next"));
+    attachLongPress($("music-jam"), () => {
+      if (music.jamUrl) copyText(music.jamUrl);
+    }, () => {
+      if (music.jamUrl) window.open(music.jamUrl, "_blank", "noopener");
+      else toast(music.jamStatus);
+    });
     const vol = $("music-volume");
     vol.addEventListener("pointerdown", () => { music.volDragging = true; music.volTouched = Date.now(); });
     const release = () => { music.volDragging = false; music.volTouched = Date.now(); };
@@ -268,12 +265,12 @@
       scheduleSettle(area);
     });
 
-    attachLongPress(name, () => openSheet(info));
+    attachLongPress(name, () => openSheet(info), () => toast("Hold the name for scenes ✿"));
     return el;
   }
 
   /** Long press (touch or mouse) or right-click opens the scene sheet; a short tap gives a hint. */
-  function attachLongPress(el, onLong) {
+  function attachLongPress(el, onLong, onTap = () => {}) {
     let timer = 0, fired = false, startX = 0, startY = 0;
     const cancel = () => { clearTimeout(timer); timer = 0; el.classList.remove("pressing"); };
     el.addEventListener("pointerdown", (e) => {
@@ -288,10 +285,10 @@
     el.addEventListener("pointerup", cancel);
     el.addEventListener("pointerleave", cancel);
     el.addEventListener("pointercancel", cancel);
-    el.addEventListener("contextmenu", (e) => { e.preventDefault(); if (!fired) { cancel(); onLong(); } });
+    el.addEventListener("contextmenu", (e) => { e.preventDefault(); if (!fired) { fired = true; cancel(); onLong(); } });
     el.addEventListener("click", (e) => {
       if (fired) { e.preventDefault(); return; }
-      toast("Hold the name for scenes ✿");
+      onTap();
     });
     el.addEventListener("keydown", (e) => {  // keyboard: Enter/Space opens scenes
       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onLong(); }
